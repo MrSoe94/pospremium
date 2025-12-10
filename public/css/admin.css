@@ -1,0 +1,125 @@
+/* Admin page specific styles (extracted from admin.html) */
+.is-invalid {
+    border-color: #dc3545;
+}
+.is-valid {
+    border-color: #198754;
+}
+.invalid-feedback {
+    color: #dc3545;
+    font-size: 0.875em;
+    margin-top: 0.25rem;
+}
+/* Responsive sidebar sizing */
+#sidebar { overflow-y: auto; overflow-x: hidden; }
+#sidebar .nav-link { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Make toggle work at all breakpoints */
+body.sidebar-hidden #sidebar { display: none !important; }
+body.sidebar-hidden #mainContent { max-width: 100% !important; }
+/* Mobile/tablet: show sidebar as overlay when toggled */
+@media (max-width: 991.98px) {
+  /* Keep navbar (z-index:1030 in Bootstrap) above backdrop, below sidebar */
+  body.sidebar-visible::before { content: ''; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1020; }
+  #sidebar { z-index: 1040; }
+  body.sidebar-visible #sidebar { 
+    display: block !important; 
+    position: fixed; 
+    top: 56px; /* approx navbar height */
+    left: 0; 
+    height: calc(100vh - 56px);
+    width: clamp(220px, 80vw, 320px);
+    max-width: 90vw;
+    overflow-y: auto; 
+    box-shadow: 0 0.5rem 1rem rgba(0,0,0,.15);
+  }
+  /* Mobile: main content always full width */
+  #mainContent {
+    margin-left: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+}
+/* At lg and above, define fixed sidebar width and shift main content */
+@media (min-width: 992px) {
+  :root { --sidebar-width: clamp(200px, 18vw, 280px); }
+  #sidebar { flex: 0 0 var(--sidebar-width) !important; max-width: var(--sidebar-width) !important; width: var(--sidebar-width) !important; }
+  /* Ketika sidebar terlihat, geser konten ke kanan dan kurangi lebarnya */
+  #mainContent {
+    margin-left: var(--sidebar-width);
+    width: calc(100% - var(--sidebar-width));
+    max-width: calc(100% - var(--sidebar-width));
+    transition: all 0.2s ease-in-out;
+  }
+  /* Ketika sidebar disembunyikan, konten kembali penuh */
+  body.sidebar-hidden #mainContent {
+    margin-left: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  /* View yang berada di luar #mainContent: samakan perilaku dengan mainContent di desktop */
+  body:not(.sidebar-hidden) #shifts-view,
+  body:not(.sidebar-hidden) #customers-view,
+  body:not(.sidebar-hidden) #customer-debts-view,
+  body:not(.sidebar-hidden) #banners-view,
+  body:not(.sidebar-hidden) #qris-view,
+  body:not(.sidebar-hidden) #backup-view,
+  body:not(.sidebar-hidden) #suppliers-view,
+  body:not(.sidebar-hidden) #credits-view {
+    margin-left: var(--sidebar-width);
+    width: calc(100% - var(--sidebar-width));
+    max-width: calc(100% - var(--sidebar-width));
+    transition: all 0.2s ease-in-out;
+  }
+
+  body.sidebar-hidden #shifts-view,
+  body.sidebar-hidden #customers-view,
+  body.sidebar-hidden #customer-debts-view,
+  body.sidebar-hidden #banners-view,
+  body.sidebar-hidden #qris-view,
+  body.sidebar-hidden #backup-view,
+  body.sidebar-hidden #suppliers-view,
+  body.sidebar-hidden #credits-view {
+    margin-left: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  /* Ensure tables and containers adapt properly */
+  .table-responsive {
+    transition: all 0.2s ease-in-out;
+  }
+  
+  /* Modal positioning adjustment for sidebar */
+  body:not(.sidebar-hidden) .modal-dialog {
+    margin-left: calc(var(--sidebar-width) / 2);
+  }
+  
+  body.sidebar-hidden .modal-dialog {
+    margin-left: 0;
+  }
+}
+/* Customer table specific styles */
+#customers-view .table th:nth-child(4), #customers-view .table td:nth-child(4) { /* Email column */
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+#customers-view .table th:nth-child(5), #customers-view .table td:nth-child(5) { /* Address column */
+    max-width: 250px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+#customers-view .table th:nth-child(6), #customers-view .table td:nth-child(6) { /* Date column */
+    min-width: 120px;
+}
+#customers-view .table th:last-child, #customers-view .table td:last-child { /* Actions column */
+    width: 100px;
+    min-width: 100px;
+}
+/* For md screens, keep sidebar narrower when visible */
+@media (min-width: 768px) and (max-width: 991.98px) {
+  :root { --sidebar-width: clamp(180px, 22vw, 240px); }
+}

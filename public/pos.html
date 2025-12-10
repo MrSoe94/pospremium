@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cashier - POS System</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/style.css?v=2" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css"
+    />
+    <link rel="icon" href="/favicon.ico" />
+  </head>
+  <body class="d-flex flex-column min-vh-100">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-success">
+      <div class="container-fluid">
+        <a class="navbar-brand d-flex align-items-center gap-2" href="#">
+          <img
+            id="brandLogo"
+            src=""
+            alt="Logo"
+            style="
+              height: 24px;
+              width: 24px;
+              object-fit: contain;
+              display: none;
+            "
+          />
+          <span id="brandName">POS System</span>
+        </a>
+        <div class="d-flex align-items-center">
+          <span id="posClock" class="text-light me-3 small"></span>
+          <button
+            class="btn btn-outline-light btn-sm me-2 d-lg-none"
+            id="sidebarToggleBtn"
+            title="Toggle Sidebar"
+          >
+            <i class="bi bi-layout-sidebar"></i>
+          </button>
+          <button
+            class="btn btn-outline-light btn-sm me-2"
+            id="posSettingsBtn"
+            title="Settings"
+          >
+            <i class="bi bi-gear"></i> Settings
+          </button>
+          <a href="/revenue" class="btn btn-outline-light btn-sm me-2" title="Pendapatan">
+            <i class="bi bi-cash-coin"></i> Pendapatan
+          </a>
+          <span
+            id="trialStatusBadge"
+            class="badge bg-warning text-dark me-2 d-none"
+          ></span>
+          <span
+            id="shiftStatusLabel"
+            class="me-2 text-light small d-none d-md-inline"
+          >
+            Shift: Belum dibuka
+          </span>
+          <button
+            class="btn btn-outline-warning btn-sm me-2"
+            id="shiftActionBtn"
+            type="button"
+          >
+            Buka Shift
+          </button>
+          <label class="bb8-toggle" style="font-size: 8px; margin: 0;">
+            <input class="bb8-toggle__checkbox" type="checkbox" id="darkModeToggle">
+            <div class="bb8-toggle__container">
+              <div class="bb8-toggle__scenery">
+                <div class="bb8-toggle__star"></div>
+                <div class="bb8-toggle__star"></div>
+                <div class="bb8-toggle__star"></div>
+                <div class="bb8-toggle__star"></div>
+                <div class="bb8-toggle__star"></div>
+                <div class="bb8-toggle__star"></div>
+                <div class="bb8-toggle__star"></div>
+                <div class="tatto-1"></div>
+                <div class="tatto-2"></div>
+                <div class="gomrassen"></div>
+                <div class="hermes"></div>
+                <div class="chenini"></div>
+                <div class="bb8-toggle__cloud"></div>
+                <div class="bb8-toggle__cloud"></div>
+                <div class="bb8-toggle__cloud"></div>
+              </div>
+              <div class="bb8">
+                <div class="bb8__head-container">
+                  <div class="bb8__antenna"></div>
+                  <div class="bb8__antenna"></div>
+                  <div class="bb8__head"></div>
+                </div>
+                <div class="bb8__body"></div>
+              </div>
+              <div class="artificial__hidden">
+                <div class="bb8__shadow"></div>
+              </div>
+            </div>
+          </label>
+          <button class="btn btn-outline-light btn-sm" id="logoutBtn">
+            Logout
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <main class="container-fluid mt-4 flex-grow-1">
+      <!-- Banner Section -->
+      <div class="row mb-3">
+        <div class="col-12" id="bannerContainer">
+          <!-- Banner will be loaded here -->
+        </div>
+      </div>
+
+      <div class="row pos-main-container">
+        <main class="col-lg-8 d-flex flex-column pos-products-container">
+          <!-- PERBAIKAN: Area Pencarian yang Lebih Premium -->
+          <div class="row g-2 mb-3 align-items-center">
+            <div class="col-12 col-sm-6 col-md-4">
+              <div class="input-group">
+                <span class="input-group-text"
+                  ><i class="bi bi-search"></i
+                ></span>
+                <input
+                  type="text"
+                  class="form-control"
+                  id="searchInput"
+                  placeholder="Search by product name..."
+                />
+              </div>
+            </div>
+            <div class="col-12 col-sm-6 col-md-3 d-flex gap-2 mt-2 mt-sm-0">
+              <div class="dropdown">
+                <button
+                  class="btn btn-outline-secondary dropdown-toggle"
+                  type="button"
+                  id="categoryDropdownToggle"
+                  data-bs-toggle="dropdown"
+                >
+                  <i class="bi bi-funnel"></i> <span>Category</span>
+                </button>
+                <ul class="dropdown-menu" id="categoryDropdownMenu">
+                  <li>
+                    <a class="dropdown-item" href="#" data-category-id="all"
+                      >All Categories</a
+                    >
+                  </li>
+                  <li><hr class="dropdown-divider" /></li>
+                  <!-- Kategori akan dimuat secara dinamis oleh JavaScript -->
+                </ul>
+              </div>
+              <button
+                class="btn btn-outline-secondary"
+                id="resetCategoryBtn"
+                title="Reset Category"
+              >
+                <i class="bi bi-arrow-counterclockwise"></i>
+              </button>
+            </div>
+            <div
+              class="col-12 col-sm-6 col-md-3 d-flex gap-2 justify-content-sm-end mt-2 mt-md-0"
+            >
+              <div class="btn-group" role="group">
+                <button
+                  type="button"
+                  class="btn btn-outline-secondary"
+                  id="clearSearchBtn"
+                >
+                  Clear
+                </button>
+              </div>
+              <button
+                class="btn btn-outline-secondary"
+                id="refreshPosBtn"
+                title="Refresh"
+              >
+                <i class="bi bi-arrow-clockwise"></i>
+              </button>
+              <button
+                class="btn btn-outline-primary"
+                id="openCameraScannerBtn"
+                title="Scan Kamera"
+              >
+                <i class="bi bi-camera"></i>
+              </button>
+            </div>
+            <div
+              class="col-12 col-sm-6 col-md-2 d-flex flex-column align-items-center justify-content-md-end gap-1 mt-2 mt-md-0"
+            >
+              <div class="form-check form-switch m-0">
+                <input
+                  class="form-check-input"
+                  type="checkbox"
+                  id="scannerToggle"
+                />
+                <label class="form-check-label ms-2" for="scannerToggle"
+                  >USB</label
+                >
+              </div>
+              <small id="scannerStatus" class="text-muted"></small>
+            </div>
+          </div>
+
+          <h3>Products</h3>
+          <div class="mb-3">
+            <button class="btn btn-sm btn-outline-secondary" id="filterAll">
+              All
+            </button>
+            <button class="btn btn-sm btn-outline-secondary" id="filterTop">
+              Top Products
+            </button>
+            <button class="btn btn-sm btn-outline-secondary" id="filterBest">
+              Best Sellers
+            </button>
+            <button
+              class="btn btn-sm btn-outline-secondary"
+              id="filterDiscounted"
+            >
+              Discounted
+            </button>
+          </div>
+          <div id="productList" class="row g-3 flex-grow-1 overflow-auto"></div>
+        </main>
+
+        <!-- Camera Scanner Modal -->
+        <div
+          class="modal fade"
+          id="cameraScannerModal"
+          tabindex="-1"
+          aria-hidden="true"
+        >
+          <div
+            class="modal-dialog modal-dialog-centered modal-lg modal-fullscreen-sm-down"
+          >
+            <div class="modal-content bg-dark text-light">
+              <div class="modal-header border-0">
+                <h5 class="modal-title">
+                  <i class="bi bi-camera-video"></i> Scan Kamera
+                </h5>
+                <button
+                  type="button"
+                  class="btn-close btn-close-white"
+                  data-bs-dismiss="modal"
+                  aria-label="Close"
+                ></button>
+              </div>
+              <div class="modal-body pt-0">
+                <video
+                  id="cameraScannerVideo"
+                  style="width: 100%; max-height: 60vh; background: #000"
+                  autoplay
+                  muted
+                  playsinline
+                ></video>
+                <small class="text-muted"
+                  >Arahkan barcode/QR ke kamera. Deteksi akan otomatis.</small
+                >
+              </div>
+              <div class="modal-footer border-0">
+                <button
+                  type="button"
+                  class="btn btn-outline-light"
+                  data-bs-dismiss="modal"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Unit Price Variant Selection Modal -->
+        <div
+          class="modal fade"
+          id="variantSelectModal"
+          tabindex="-1"
+          aria-hidden="true"
+        >
+          <div class="modal-dialog">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title">Pilih Varian Harga</h5>
+                <button
+                  type="button"
+                  class="btn-close"
+                  data-bs-dismiss="modal"
+                  aria-label="Close"
+                ></button>
+              </div>
+              <div class="modal-body">
+                <div id="variantOptions">
+                  <!-- options rendered by pos.js -->
+                </div>
+              </div>
+              <div class="modal-footer">
+                <button
+                  type="button"
+                  class="btn btn-secondary"
+                  data-bs-dismiss="modal"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-primary"
+                  id="confirmVariantBtn"
+                >
+                  Tambah
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Custom Price Modal -->
+        <div
+          class="modal fade"
+          id="customPriceModal"
+          tabindex="-1"
+          aria-hidden="true"
+        >
+          <div class="modal-dialog">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title">Custom Harga Barang</h5>
+                <button
+                  type="button"
+                  class="btn-close"
+                  data-bs-dismiss="modal"
+                  aria-label="Close"
+                ></button>
+              </div>
+              <div class="modal-body">
+                <div class="mb-3">
+                  <label class="form-label">Nama Barang</label>
+                  <input type="text" class="form-control" id="customPriceProductName" readonly>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">Harga Asli</label>
+                  <input type="text" class="form-control" id="customPriceOriginal" readonly>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">Harga Custom</label>
+                  <div class="input-group">
+                    <span class="input-group-text">Rp</span>
+                    <input type="number" class="form-control" id="customPriceValue" min="0" step="100">
+                  </div>
+                  <small class="form-text text-muted">Masukkan harga kustom untuk barang ini</small>
+                </div>
+              </div>
+              <div class="modal-footer">
+                <button
+                  type="button"
+                  class="btn btn-secondary"
+                  data-bs-dismiss="modal"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-primary"
+                  id="confirmCustomPriceBtn"
+                >
+                  Simpan Harga
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="col-lg-4 pos-cart-container">
+          <div class="card">
+            <div
+              class="card-header d-flex justify-content-between align-items-center"
+            >
+              <h5 class="mb-0">Shopping Cart</h5>
+              <button
+                class="btn btn-sm btn-outline-secondary"
+                id="refreshCartBtn"
+                type="button"
+                title="Refresh Cart"
+              >
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+              </button>
+            </div>
+            <div class="card-body">
+              <!-- Customer Selection -->
+              <div class="mb-3">
+                <label class="form-label" for="customerSelect">Customer</label>
+                <select class="form-select form-select-sm" id="customerSelect">
+                  <option value="default">Pelanggan Umum</option>
+                  <!-- Customer options will be populated by JavaScript -->
+                </select>
+                <div id="customerInfo" class="mt-2 p-2 bg-light rounded small">
+                  <strong>Pelanggan Umum</strong><br />
+                  <span class="text-muted">Tidak ada informasi tambahan</span>
+                </div>
+              </div>
+              <hr />
+              <div
+                id="cartItems"
+                style="min-height: 200px; max-height: 400px; overflow-y: auto"
+              >
+                <p class="text-muted">Cart is empty.</p>
+              </div>
+              <hr />
+              <div class="mb-2">
+                <div class="row g-2 align-items-end">
+                  <div class="col-6">
+                    <label class="form-label mb-1" for="discountType"
+                      >Discount</label
+                    >
+                    <select
+                      id="discountType"
+                      class="form-select form-select-sm"
+                    >
+                      <option value="percent">Percent (%)</option>
+                      <option value="amount">Amount</option>
+                    </select>
+                  </div>
+                  <div class="col-6">
+                    <label class="form-label mb-1" for="discountValue"
+                      >Value</label
+                    >
+                    <input
+                      type="number"
+                      id="discountValue"
+                      class="form-control form-control-sm"
+                      min="0"
+                      step="0.01"
+                      value="0"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div class="small">
+                <div class="d-flex justify-content-between">
+                  <span>Subtotal</span><span id="cartSubtotal">0</span>
+                </div>
+                <div class="d-flex justify-content-between">
+                  <span>Discount</span><span id="cartDiscount">0</span>
+                </div>
+                <div class="d-flex justify-content-between">
+                  <span>Tax</span><span id="cartTax">0</span>
+                </div>
+                <div class="d-flex justify-content-between">
+                  <span>Service</span><span id="cartService">0</span>
+                </div>
+              </div>
+              <h5 class="mt-2">Total: <span id="cartTotal">0</span></h5>
+            </div>
+            <!-- PERUBAHAN: Tambahkan tombol Save as Draft -->
+            <div class="card-footer d-flex gap-2">
+              <button class="btn btn-secondary flex-fill" id="saveDraftBtn">
+                <i class="bi bi-save"></i> Save as Draft
+              </button>
+              <button class="btn btn-primary flex-fill" id="checkoutBtn">
+                Checkout
+              </button>
+            </div>
+          </div>
+
+          <!-- Saved Drafts Section -->
+          <div class="card mt-4">
+            <div
+              class="card-header d-flex justify-content-between align-items-center"
+            >
+              <h5 class="mb-0">Saved Drafts</h5>
+              <button
+                class="btn btn-sm btn-outline-secondary"
+                id="refreshDraftsBtn"
+                onclick="loadDrafts()"
+              >
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+              </button>
+            </div>
+            <div class="card-body">
+              <div id="draftsList" style="max-height: 300px; overflow-y: auto">
+                <p class="text-muted">No saved drafts.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Customer Debts Summary (POS) -->
+          <div class="card mt-4">
+            <div
+              class="card-header d-flex justify-content-between align-items-center"
+            >
+              <h5 class="mb-0">Daftar Hutang Customer</h5>
+            </div>
+            <div class="card-body">
+              <div
+                id="posCustomerDebtsSummary"
+                class="small"
+                style="max-height: 260px; overflow-y: auto"
+              >
+                <p class="text-muted mb-0">Tidak ada hutang customer aktif.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Recent Transactions Section -->
+          <div class="card mt-4">
+            <div
+              class="card-header d-flex justify-content-between align-items-center"
+            >
+              <h5 class="mb-0">Recent Transactions</h5>
+              <button
+                class="btn btn-sm btn-outline-secondary"
+                id="refreshRecentBtn"
+                onclick="loadRecentTransactions()"
+              >
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+              </button>
+            </div>
+            <div class="card-body">
+              <div
+                id="recentTransactionsList"
+                style="max-height: 300px; overflow-y: auto"
+              >
+                <p class="text-muted">Loading recent transactions...</p>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </main>
+
+    <footer class="bg-dark text-light text-center py-3 mt-4">
+      <div class="container">
+        <p class="mb-0">&copy; 2024 POS System. All Rights Reserved.</p>
+      </div>
+    </footer>
+
+    <!-- Transaction Details Modal -->
+    <div class="modal fade" id="transactionDetailsModal" tabindex="-1">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Transaction Details</h5>
+            <button
+              type="button"
+              class="btn-close"
+              data-bs-dismiss="modal"
+            ></button>
+          </div>
+          <div class="modal-body">
+            <div id="transactionDetailsContent">
+              <!-- Details will be loaded here -->
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              data-bs-dismiss="modal"
+            >
+              Close
+            </button>
+            <button type="button" class="btn btn-success" id="sendToWABtn">
+              <i class="bi bi-whatsapp"></i> Kirim ke WA
+            </button>
+            <button
+              type="button"
+              class="btn btn-primary"
+              id="printReceiptFromDetailsBtn"
+            >
+              <i class="bi bi-printer"></i> Print Receipt
+            </button>
+            <button
+              type="button"
+              class="btn btn-danger"
+              id="voidTransactionBtn"
+            >
+              Void Transaction
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Customer Debt Details Modal -->
+    <div class="modal fade" id="customerDebtDetailsModal" tabindex="-1">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Detail Hutang Customer</h5>
+            <button
+              type="button"
+              class="btn-close"
+              data-bs-dismiss="modal"
+            ></button>
+          </div>
+          <div class="modal-body">
+            <div id="customerDebtDetailsContent">
+              <!-- Details will be loaded here -->
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              data-bs-dismiss="modal"
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              class="btn btn-success"
+              id="posPayDebtFromDetailsBtn"
+            >
+              <i class="bi bi-cash"></i> Bayar
+            </button>
+            <button
+              type="button"
+              class="btn btn-primary"
+              id="posPrintDebtReceiptBtn"
+            >
+              <i class="bi bi-printer"></i> Print Receipt
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Customer Debt Payment Modal -->
+    <div class="modal fade" id="customerDebtPaymentModal" tabindex="-1">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Pembayaran Hutang Customer</h5>
+            <button
+              type="button"
+              class="btn-close"
+              data-bs-dismiss="modal"
+            ></button>
+          </div>
+          <div class="modal-body">
+            <div id="customerDebtPaymentContent">
+              <!-- Payment form will be loaded here -->
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              data-bs-dismiss="modal"
+            >
+              Batal
+            </button>
+            <button
+              type="button"
+              class="btn btn-success"
+              id="savePosCustomerPaymentBtn"
+            >
+              <i class="bi bi-cash"></i> Simpan Pembayaran
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Checkout Modal -->
+    <div class="modal fade" id="checkoutModal" tabindex="-1">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Checkout</h5>
+            <button
+              type="button"
+              class="btn-close"
+              data-bs-dismiss="modal"
+            ></button>
+          </div>
+          <div class="modal-body">
+            <h6>Total Amount: <span id="modalTotal"></span></h6>
+            <div class="mb-3">
+              <label class="form-label">Payment Method</label>
+              <div>
+                <div class="form-check">
+                  <input
+                    class="form-check-input"
+                    type="radio"
+                    name="paymentMethod"
+                    id="payCash"
+                    value="cash"
+                    checked
+                  /><label class="form-check-label" for="payCash">Cash</label>
+                </div>
+                <div class="form-check">
+                  <input
+                    class="form-check-input"
+                    type="radio"
+                    name="paymentMethod"
+                    id="payQris"
+                    value="qris"
+                  /><label class="form-check-label" for="payQris">QRIS</label>
+                </div>
+                <div class="form-check">
+                  <input
+                    class="form-check-input"
+                    type="radio"
+                    name="paymentMethod"
+                    id="payDana"
+                    value="dana"
+                  /><label class="form-check-label" for="payDana">DANA</label>
+                </div>
+                <div class="form-check">
+                  <input
+                    class="form-check-input"
+                    type="radio"
+                    name="paymentMethod"
+                    id="payOvo"
+                    value="ovo"
+                  /><label class="form-check-label" for="payOvo">OVO</label>
+                </div>
+              </div>
+            </div>
+            <div id="cashPaymentSection">
+              <label for="amountReceived" class="form-label"
+                >Amount Received</label
+              >
+              <div class="input-group">
+                <input type="number" class="form-control" id="amountReceived" />
+                <button type="button" class="btn btn-outline-secondary" id="transferTotalBtn" title="Transfer Total Amount">
+                  <i class="bi bi-arrow-down-circle"></i>
+                </button>
+              </div>
+              <h6 class="mt-2">Change: <span id="changeAmount">Rp 0</span></h6>
+            </div>
+            <div id="qrisPaymentSection" style="display: none">
+              <p>Please scan the QR code below to complete the payment.</p>
+              <img
+                id="qrisCheckoutImage"
+                src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjY2NjIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzAwMCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPk5vIFFSSVM8L3RleHQ+PC9zdmc+"
+                alt="QRIS Code"
+                class="img-fluid"
+              />
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              data-bs-dismiss="modal"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn btn-success"
+              id="confirmPaymentBtn"
+            >
+              Confirm Payment
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Payment Success Modal -->
+    <div
+      class="modal fade"
+      id="paymentSuccessModal"
+      tabindex="-1"
+      data-bs-backdrop="static"
+      data-bs-keyboard="false"
+    >
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Payment Successful!</h5>
+          </div>
+          <div class="modal-body text-center">
+            <i
+              class="bi bi-check-circle-fill text-success"
+              style="font-size: 3rem"
+            ></i>
+            <p class="mt-3">Transaction has been completed successfully.</p>
+            <p>
+              <strong>Transaction ID:</strong>
+              <span id="successTransactionId"></span>
+            </p>
+          </div>
+          <div class="modal-footer justify-content-center">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              onclick="startNewTransaction()"
+            >
+              New Transaction
+            </button>
+            <button type="button" class="btn btn-primary" id="printReceiptBtn">
+              Print Receipt
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- POS Settings Modal -->
+    <div class="modal fade" id="posSettingsModal" tabindex="-1">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title"><i class="bi bi-gear"></i> POS Settings</h5>
+            <button
+              type="button"
+              class="btn-close"
+              data-bs-dismiss="modal"
+            ></button>
+          </div>
+          <div class="modal-body">
+            <div class="mb-3">
+              <label class="form-label" for="posPaperWidth"
+                ><i class="bi bi-file-earmark-ruled"></i> Paper Width</label
+              >
+              <select class="form-select" id="posPaperWidth">
+                <option value="48">48 mm</option>
+                <option value="58">58 mm</option>
+                <option value="76">76 mm</option>
+                <option value="80">80 mm</option>
+                <option value="100">100 mm</option>
+              </select>
+              <small class="form-text text-muted"
+                >Choose paper width for receipt printing. Font size will adjust
+                automatically.</small
+              >
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="posStoreName"
+                ><i class="bi bi-shop"></i> Store Name</label
+              >
+              <input
+                type="text"
+                class="form-control"
+                id="posStoreName"
+                placeholder="Enter store name"
+              />
+              <small class="form-text text-muted"
+                >Store name displayed on receipts</small
+              >
+            </div>
+            <div class="row">
+              <div class="col-md-6">
+                <label class="form-label">Customer</label>
+                <select class="form-select" id="posSettingsCustomerSelect">
+                  <option value="">-- Pilih Customer --</option>
+                  <option value="default">Pelanggan Umum</option>
+                  <!-- Customer options will be populated by JavaScript (settings modal) -->
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Customer Info</label>
+                <div id="posSettingsCustomerInfo" class="p-2 bg-light rounded">
+                  <small class="text-muted">Belum ada customer dipilih</small>
+                </div>
+              </div>
+            </div>
+            <div class="mb-3">
+              <div class="form-check">
+                <input
+                  class="form-check-input"
+                  type="checkbox"
+                  id="posShowAddress"
+                />
+                <label class="form-check-label" for="posShowAddress">
+                  <i class="bi bi-geo-alt"></i> Show Address on Receipt
+                </label>
+              </div>
+            </div>
+            <div class="mb-3">
+              <div class="form-check">
+                <input
+                  class="form-check-input"
+                  type="checkbox"
+                  id="posShowPhone"
+                />
+                <label class="form-check-label" for="posShowPhone">
+                  <i class="bi bi-telephone"></i> Show Phone on Receipt
+                </label>
+              </div>
+            </div>
+            <div class="mb-3">
+              <div class="form-check">
+                <input
+                  class="form-check-input"
+                  type="checkbox"
+                  id="posShowFooter"
+                  checked
+                />
+                <label class="form-check-label" for="posShowFooter">
+                  <i class="bi bi-card-text"></i> Show Footer on Receipt
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              data-bs-dismiss="modal"
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              class="btn btn-primary"
+              id="savePosSettingsBtn"
+            >
+              <i class="bi bi-save"></i> Save Settings
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Ensure html2canvas and jsPDF are available globally for PDF generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <script src="/js/pos_clean.js?v=4"></script>
+    <script src="/js/back-to-top.js?v=2"></script>
+    <script>
+      (function () {
+        const btn = document.getElementById("sidebarToggleBtn");
+        if (btn) {
+          btn.addEventListener("click", function () {
+            const cart = document.querySelector(".pos-cart-container");
+            if (cart) {
+              cart.classList.toggle("is-open");
+            }
+          });
+        }
+      })();
+    </script>
+    <script>
+      (function () {
+        async function loadTrialStatus() {
+          try {
+            var el = document.getElementById('trialStatusBadge');
+            if (!el) return;
+            var showBadge = function(){ try { el.classList.remove('d-none'); } catch(e){} };
+            var hideBadge = function(){ try { el.classList.add('d-none'); el.textContent=''; } catch(e){} };
+            var resp = await fetch('/api/trial-status', { headers: { 'Accept': 'application/json' } });
+            if (!resp.ok) return;
+            var data = await resp.json();
+            if (data && data.enabled) {
+              showBadge();
+              if (data.expired) {
+                el.textContent = 'Trial habis';
+                el.classList.remove('bg-warning', 'text-dark');
+                el.classList.add('bg-danger', 'text-light');
+              } else {
+                var mode = (data.mode || 'days').toString().toLowerCase();
+                if (mode === 'runs') {
+                  var remainingRuns = typeof data.remainingRuns === 'number' ? data.remainingRuns : null;
+                  var totalRuns = typeof data.totalRuns === 'number' ? data.totalRuns : null;
+                  if (remainingRuns !== null && totalRuns !== null) {
+                    el.textContent = 'Trial buka: ' + remainingRuns + ' / ' + totalRuns + ' kali';
+                  } else if (remainingRuns !== null) {
+                    el.textContent = 'Trial buka tersisa ' + remainingRuns + ' kali';
+                  } else {
+                    var usedRuns = typeof data.usedRuns === 'number' ? data.usedRuns : (typeof data.runCount === 'number' ? data.runCount : null);
+                    if (usedRuns !== null && totalRuns) {
+                      el.textContent = 'Trial buka: ' + usedRuns + ' dari ' + totalRuns + ' kali';
+                    } else {
+                      el.textContent = 'Trial aktif (mode jumlah buka)';
+                    }
+                  }
+                } else {
+                  var remaining = typeof data.remainingDays === 'number' ? data.remainingDays : null;
+                  var total = typeof data.totalDays === 'number' ? data.totalDays : null;
+                  if (remaining !== null && total !== null) {
+                    el.textContent = 'Trial: ' + remaining + ' / ' + total + ' hari';
+                  } else if (remaining !== null) {
+                    el.textContent = 'Trial sisa ' + remaining + ' hari';
+                  } else {
+                    el.textContent = 'Trial aktif';
+                  }
+                }
+              }
+              return;
+            }
+
+            // Trial non-aktif: cek license berbasis tanggal
+            try {
+              var respLic = await fetch('/api/license/status', { headers: { 'Accept': 'application/json' } });
+              if (!respLic.ok) { hideBadge(); return; }
+              var lic = await respLic.json();
+              var off = lic && lic.offline;
+              var rem = (lic && typeof lic.remainingDays === 'number') ? lic.remainingDays : null;
+              if (off && off.valid && rem !== null && rem >= 0) {
+                showBadge();
+                el.classList.remove('bg-danger', 'text-light');
+                el.classList.add('bg-warning', 'text-dark');
+                el.textContent = 'License sisa ' + rem + ' hari';
+              } else {
+                hideBadge();
+              }
+            } catch (e2) {
+              hideBadge();
+            }
+          } catch (e) {}
+        }
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', loadTrialStatus);
+        } else {
+          loadTrialStatus();
+        }
+      })();
+    </script>
+
+    <!-- Back to Top Button -->
+    <button
+      id="backToTopBtn"
+      class="btn btn-primary back-to-top"
+      title="Back to Top"
+    >
+      <i class="bi bi-arrow-up"></i>
+    </button>
+  </body>
+</html>
