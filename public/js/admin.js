@@ -278,6 +278,7 @@ function restoreSidebarState() {
 document.addEventListener('DOMContentLoaded', function() {
     initSidebarToggle();
     restoreSidebarState();
+    loadAppVersion();
 });
 
 // Also initialize when script loads (for dynamic content)
@@ -10790,6 +10791,22 @@ document.addEventListener('click', async (e) => {
     }
 });
 
+// Load app version
+async function loadAppVersion() {
+  try {
+    const response = await fetch('/api/app-version');
+    const result = await response.json();
+    if (result.success) {
+      const versionElement = document.getElementById('appVersion');
+      if (versionElement) {
+        versionElement.textContent = `v${result.version}`;
+      }
+    }
+  } catch (error) {
+    console.error('Error loading app version:', error);
+  }
+}
+
 // Event listener untuk tombol cek update
 document.addEventListener('click', async (e) => {
     if (e.target.closest('#checkUpdateBtn')) {
@@ -10854,9 +10871,24 @@ async function checkForUpdate() {
             
             if (downloadBtn) {
                 downloadBtn.classList.remove('d-none');
-                downloadBtn.onclick = () => {
-                    window.open(result.releaseInfo.downloadUrl, '_blank');
+                downloadBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Hot-Reload (No Restart)';
+                downloadBtn.onclick = async () => {
+                    if (confirm(`Hot-Reload ke versi ${result.latestVersion}?\n\nAplikasi akan:\n1. Download source code terbaru\n2. Update files langsung\n3. TANPA RESTART aplikasi\n\nServer tetap berjalan normal!`)) {
+                        await performHotReload();
+                    }
                 };
+                
+                // Add restart update button
+                const restartBtn = document.createElement('button');
+                restartBtn.className = 'btn btn-warning ms-2';
+                restartBtn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Update + Restart';
+                restartBtn.onclick = async () => {
+                    if (confirm(`Update dengan restart ke versi ${result.latestVersion}?\n\nAplikasi akan:\n1. Download update terbaru\n2. Stop aplikasi\n3. Replace files\n4. Restart otomatis\n\nProses akan memakan waktu beberapa menit.`)) {
+                        await performRestartUpdate();
+                    }
+                };
+                
+                downloadBtn.parentNode.appendChild(restartBtn);
             }
         } else {
             updateHtml = `
@@ -10878,5 +10910,371 @@ async function checkForUpdate() {
                 <p class="mb-0">Gagal memeriksa update: ${error.message}</p>
             </div>
         `;
+    }
+}
+
+// Fungsi untuk melakukan hot-reload update
+async function performHotReload() {
+    const content = document.getElementById('updateCheckContent');
+    const downloadBtn = document.getElementById('downloadUpdateBtn');
+    
+    // Show progress
+    content.innerHTML = `
+        <div class="text-center">
+            <div class="spinner-border text-success" role="status">
+                <span class="visually-hidden">Hot-Reloading...</span>
+            </div>
+            <p class="mt-3">Memulai hot-reload update...</p>
+            <div class="progress mt-3">
+                <div class="progress-bar bg-success progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%" id="updateProgress">0%</div>
+            </div>
+        </div>
+    `;
+    
+    if (downloadBtn) {
+        downloadBtn.disabled = true;
+        downloadBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Hot-Reloading...';
+    }
+    
+    try {
+        const updateProgress = (percent) => {
+            const progressBar = document.getElementById('updateProgress');
+            if (progressBar) {
+                progressBar.style.width = percent + '%';
+                progressBar.textContent = percent + '%';
+            }
+        };
+        
+        updateProgress(10);
+        
+        const response = await fetch('/api/auto-update', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        updateProgress(50);
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            updateProgress(100);
+            content.innerHTML = `
+                <div class="alert alert-success">
+                    <h6><i class="bi bi-check-circle"></i> Hot-Reload Berhasil!</h6>
+                    <p class="mb-2">Versi: ${result.currentVersion} → ${result.latestVersion}</p>
+                    <p class="mb-0">${result.message}</p>
+                </div>
+                <div class="text-center mt-3">
+                    <i class="bi bi-check-circle text-success" style="font-size: 3rem;"></i>
+                    <p class="mt-3">Aplikasi berhasil diupdate tanpa restart!</p>
+                    <button class="btn btn-primary mt-2" onclick="window.location.reload()">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh Halaman
+                    </button>
+                </div>
+            `;
+        } else if (result.isCodeSandbox) {
+            // CodeSandbox environment detected
+            content.innerHTML = `
+                <div class="alert alert-warning">
+                    <h6><i class="bi bi-exclamation-triangle"></i> CodeSandbox Environment</h6>
+                    <p class="mb-2">${result.message}</p>
+                    <p class="mb-0">Auto-update tidak tersedia di CodeSandbox.</p>
+                </div>
+                <div class="text-center mt-3">
+                    <i class="bi bi-cloud text-warning" style="font-size: 3rem;"></i>
+                    <p class="mt-3">Update manual diperlukan</p>
+                    <button class="btn btn-primary mt-2" onclick="window.open('${result.manualUpdateUrl}', '_blank')">
+                        <i class="bi bi-github"></i> Download dari GitHub
+                    </button>
+                    <div class="mt-3">
+                        <small class="text-muted">
+                            Untuk auto-update penuh, deploy ke server lokal atau VPS.
+                        </small>
+                    </div>
+                </div>
+            `;
+        } else {
+            throw new Error(result.message || 'Hot-reload failed');
+        }
+        
+    } catch (error) {
+        console.error('Hot-reload error:', error);
+        content.innerHTML = `
+            <div class="alert alert-danger">
+                <h6><i class="bi bi-exclamation-triangle"></i> Hot-Reload Gagal</h6>
+                <p class="mb-0">Hot-reload gagal: ${error.message}</p>
+                <hr>
+                <p class="mb-2">Alternatif:</p>
+                <button class="btn btn-outline-warning" onclick="performRestartUpdate()">
+                    <i class="bi bi-arrow-repeat"></i> Coba Update + Restart
+                </button>
+            </div>
+        `;
+        
+        if (downloadBtn) {
+            downloadBtn.disabled = false;
+            downloadBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Hot-Reload (No Restart)';
+        }
+    }
+}
+
+// Fungsi untuk melakukan restart update
+async function performRestartUpdate() {
+    const content = document.getElementById('updateCheckContent');
+    const downloadBtn = document.getElementById('downloadUpdateBtn');
+    
+    // Show progress
+    content.innerHTML = `
+        <div class="text-center">
+            <div class="spinner-border text-warning" role="status">
+                <span class="visually-hidden">Updating...</span>
+            </div>
+            <p class="mt-3">Memulai update dengan restart...</p>
+            <div class="progress mt-3">
+                <div class="progress-bar bg-warning progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%" id="updateProgress">0%</div>
+            </div>
+        </div>
+    `;
+    
+    if (downloadBtn) {
+        downloadBtn.disabled = true;
+        downloadBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Updating...';
+    }
+    
+    try {
+        const updateProgress = (percent) => {
+            const progressBar = document.getElementById('updateProgress');
+            if (progressBar) {
+                progressBar.style.width = percent + '%';
+                progressBar.textContent = percent + '%';
+            }
+        };
+        
+        updateProgress(10);
+        
+        const response = await fetch('/api/auto-update-restart', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        updateProgress(30);
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            updateProgress(100);
+            content.innerHTML = `
+                <div class="alert alert-success">
+                    <h6><i class="bi bi-check-circle"></i> Update Dimulai!</h6>
+                    <p class="mb-2">Versi: ${result.currentVersion} → ${result.latestVersion}</p>
+                    <p class="mb-0">${result.message}</p>
+                </div>
+                <div class="text-center mt-3">
+                    <div class="spinner-border text-success" role="status">
+                        <span class="visually-hidden">Aplikasi akan restart...</span>
+                    </div>
+                    <p class="mt-3">Aplikasi akan restart otomatis dalam beberapa detik...</p>
+                    <p class="text-muted small">Jangan tutup browser ini sampai aplikasi restart.</p>
+                </div>
+            `;
+            
+            // Check if application restarted
+            let restartAttempts = 0;
+            const maxAttempts = 30;
+            
+            const checkRestart = setInterval(async () => {
+                restartAttempts++;
+                updateProgress(100);
+                
+                try {
+                    const healthResponse = await fetch('/api/settings', { 
+                        method: 'HEAD',
+                        cache: 'no-store',
+                        timeout: 2000
+                    });
+                    
+                    if (healthResponse.ok) {
+                        clearInterval(checkRestart);
+                        content.innerHTML = `
+                            <div class="alert alert-success">
+                                <h6><i class="bi bi-check-circle"></i> Update Berhasil!</h6>
+                                <p class="mb-0">Aplikasi berhasil diupdate dan restart.</p>
+                            </div>
+                        `;
+                        
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 2000);
+                    }
+                } catch (e) {
+                    if (restartAttempts >= maxAttempts) {
+                        clearInterval(checkRestart);
+                        content.innerHTML = `
+                            <div class="alert alert-warning">
+                                <h6><i class="bi bi-exclamation-triangle"></i> Restart Timeout</h6>
+                                <p class="mb-0">Update mungkin berhasil, tapi aplikasi tidak merespond. Silakan refresh browser secara manual.</p>
+                            </div>
+                        `;
+                    }
+                }
+            }, 1000);
+            
+        } else {
+            throw new Error(result.message || 'Restart update failed');
+        }
+        
+    } catch (error) {
+        console.error('Restart update error:', error);
+        content.innerHTML = `
+            <div class="alert alert-danger">
+                <h6><i class="bi bi-exclamation-triangle"></i> Update Gagal</h6>
+                <p class="mb-0">Update gagal: ${error.message}</p>
+                <hr>
+                <p class="mb-2">Alternatif:</p>
+                <button class="btn btn-outline-primary" onclick="window.open('https://github.com/MrSoe94/pospremium/releases', '_blank')">
+                    <i class="bi bi-download"></i> Download Manual
+                </button>
+            </div>
+        `;
+        
+        if (downloadBtn) {
+            downloadBtn.disabled = false;
+            downloadBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Hot-Reload (No Restart)';
+        }
+    }
+}
+
+// Fungsi untuk melakukan auto-update (deprecated - kept for compatibility)
+async function performAutoUpdate() {
+    const content = document.getElementById('updateCheckContent');
+    const downloadBtn = document.getElementById('downloadUpdateBtn');
+    
+    // Show progress
+    content.innerHTML = `
+        <div class="text-center">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Memulai update...</span>
+            </div>
+            <p class="mt-3">Memulai proses update otomatis...</p>
+            <div class="progress mt-3">
+                <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%" id="updateProgress">0%</div>
+            </div>
+        </div>
+    `;
+    
+    if (downloadBtn) {
+        downloadBtn.disabled = true;
+        downloadBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Updating...';
+    }
+    
+    try {
+        // Update progress
+        const updateProgress = (percent) => {
+            const progressBar = document.getElementById('updateProgress');
+            if (progressBar) {
+                progressBar.style.width = percent + '%';
+                progressBar.textContent = percent + '%';
+            }
+        };
+        
+        updateProgress(10);
+        
+        const response = await fetch('/api/auto-update', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        updateProgress(30);
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            updateProgress(100);
+            content.innerHTML = `
+                <div class="alert alert-success">
+                    <h6><i class="bi bi-check-circle"></i> Update Dimulai!</h6>
+                    <p class="mb-2">Versi: ${result.currentVersion} → ${result.latestVersion}</p>
+                    <p class="mb-0">${result.message}</p>
+                </div>
+                <div class="text-center mt-3">
+                    <div class="spinner-border text-success" role="status">
+                        <span class="visually-hidden">Aplikasi akan restart...</span>
+                    </div>
+                    <p class="mt-3">Aplikasi akan restart otomatis dalam beberapa detik...</p>
+                    <p class="text-muted small">Jangan tutup browser ini sampai aplikasi restart.</p>
+                </div>
+            `;
+            
+            // Check if application restarted (polling)
+            let restartAttempts = 0;
+            const maxAttempts = 30; // 30 seconds timeout
+            
+            const checkRestart = setInterval(async () => {
+                restartAttempts++;
+                updateProgress(100);
+                
+                try {
+                    const healthResponse = await fetch('/api/settings', { 
+                        method: 'HEAD',
+                        cache: 'no-store',
+                        timeout: 2000
+                    });
+                    
+                    if (healthResponse.ok) {
+                        clearInterval(checkRestart);
+                        content.innerHTML = `
+                            <div class="alert alert-success">
+                                <h6><i class="bi bi-check-circle"></i> Update Berhasil!</h6>
+                                <p class="mb-0">Aplikasi berhasil diupdate dan restart.</p>
+                            </div>
+                        `;
+                        
+                        // Reload page after 2 seconds
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 2000);
+                    }
+                } catch (e) {
+                    // Still restarting
+                    if (restartAttempts >= maxAttempts) {
+                        clearInterval(checkRestart);
+                        content.innerHTML = `
+                            <div class="alert alert-warning">
+                                <h6><i class="bi bi-exclamation-triangle"></i> Restart Timeout</h6>
+                                <p class="mb-0">Update mungkin berhasil, tapi aplikasi tidak merespond. Silakan refresh browser secara manual.</p>
+                            </div>
+                        `;
+                    }
+                }
+            }, 1000);
+            
+        } else {
+            throw new Error(result.message || 'Auto update failed');
+        }
+        
+    } catch (error) {
+        console.error('Auto update error:', error);
+        content.innerHTML = `
+            <div class="alert alert-danger">
+                <h6><i class="bi bi-exclamation-triangle"></i> Update Gagal</h6>
+                <p class="mb-0">Auto update gagal: ${error.message}</p>
+                <hr>
+                <p class="mb-2">Alternatif:</p>
+                <button class="btn btn-outline-primary" onclick="window.open('https://github.com/MrSoe94/pospremium/releases', '_blank')">
+                    <i class="bi bi-download"></i> Download Manual
+                </button>
+            </div>
+        `;
+        
+        if (downloadBtn) {
+            downloadBtn.disabled = false;
+            downloadBtn.innerHTML = '<i class="bi bi-download"></i> Update Otomatis';
+        }
     }
 }

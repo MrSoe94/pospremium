@@ -647,6 +647,17 @@ app.post('/api/logout', async (req, res) => {
 
 // --- Middleware ---
 app.use(compression());
+
+// Security headers untuk tracking prevention
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  next();
+});
+
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" })); // Middleware untuk parsing form data
 app.use(
@@ -4878,10 +4889,15 @@ app.get('/api/check-update', async (req, res) => {
     
     try {
       const config = await readData('update-server-config.json').catch(() => ({}));
+      console.log('[UPDATE DEBUG] Raw config:', config);
       if (config && config.url) {
         updateUrl = config.url;
         updateHeaders = { ...updateHeaders, ...(config.headers || {}) };
         console.log('[UPDATE] Using custom server config:', config.name);
+        console.log('[UPDATE] URL:', updateUrl);
+        console.log('[UPDATE] Headers:', updateHeaders);
+      } else {
+        console.log('[UPDATE] No valid config found, using default');
       }
     } catch (configError) {
       console.log('[UPDATE] Using default config, failed to load custom config:', configError.message);
@@ -5112,6 +5128,370 @@ app.get('/api/dev/system-info', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Gagal mengambil informasi sistem'
+    });
+  }
+});
+
+// POST /api/auto-update - Auto update aplikasi (Hot Reload)
+app.post('/api/auto-update', async (req, res) => {
+  try {
+    console.log('[AUTO-UPDATE] Starting hot-reload update...');
+    
+    // Check if running in CodeSandbox or similar environment
+    const isCodeSandbox = process.env.CODESANDBOX_SSE || 
+                         process.env.SANDBOX_URL || 
+                         req.headers.host?.includes('codesandbox') ||
+                         req.hostname?.includes('codesandbox');
+    
+    if (isCodeSandbox) {
+      console.log('[AUTO-UPDATE] CodeSandbox detected, using fallback...');
+      return res.json({
+        success: false,
+        message: 'Auto-update tidak didukung di CodeSandbox. Silakan update manual melalui GitHub.',
+        isCodeSandbox: true,
+        manualUpdateUrl: 'https://github.com/MrSoe94/pospremium/releases'
+      });
+    }
+    
+    // Get latest release info
+    const packageJson = require('./package.json');
+    const currentVersion = packageJson.version;
+    
+    // Get update server config
+    let updateUrl = 'https://api.github.com/repos/username/pos-premium/releases/latest';
+    let updateHeaders = { 'User-Agent': 'POS-App-UpdateChecker' };
+    
+    try {
+      const config = await readData('update-server-config.json').catch(() => ({}));
+      if (config && config.url) {
+        updateUrl = config.url;
+        updateHeaders = { ...updateHeaders, ...(config.headers || {}) };
+      }
+    } catch (configError) {
+      console.log('[AUTO-UPDATE] Using default config:', configError.message);
+    }
+    
+    // Fetch latest release
+    const response = await fetch(updateUrl, {
+      headers: updateHeaders,
+      timeout: 30000
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch release: ${response.status}`);
+    }
+    
+    const release = await response.json();
+    const latestVersion = release.tag_name.replace('v', '');
+    
+    // Check if update needed
+    if (compareVersions(latestVersion, currentVersion) <= 0) {
+      return res.json({
+        success: false,
+        message: 'Already up to date',
+        currentVersion,
+        latestVersion
+      });
+    }
+    
+    // Find source code download link
+    let downloadUrl = null;
+    let fileName = null;
+    
+    if (release.assets && Array.isArray(release.assets)) {
+      // Look for source code zip
+      const sourceAsset = release.assets.find(asset => 
+        asset.name.endsWith('.zip') && 
+        (asset.name.includes('source') || 
+         asset.name.includes('src') || 
+         asset.name === 'source-code.zip')
+      );
+      
+      if (sourceAsset) {
+        downloadUrl = sourceAsset.browser_download_url;
+        fileName = sourceAsset.name;
+      }
+    }
+    
+    if (!downloadUrl) {
+      // Fallback to release page
+      downloadUrl = release.html_url;
+      fileName = `source-${latestVersion}.zip`;
+    }
+    
+    console.log('[AUTO-UPDATE] Downloading source:', downloadUrl);
+    
+    // Download the source code
+    const fs = require('fs');
+    const path = require('path');
+    
+    const downloadResponse = await fetch(downloadUrl, {
+      headers: updateHeaders,
+      timeout: 60000
+    });
+    
+    if (!downloadResponse.ok) {
+      throw new Error(`Download failed: ${downloadResponse.status}`);
+    }
+    
+    // Save to temp directory
+    const tempDir = path.join(__dirname, 'temp');
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    
+    const tempFilePath = path.join(tempDir, fileName || `source-${latestVersion}.zip`);
+    
+    // Get response data as buffer and write to file
+    const arrayBuffer = await downloadResponse.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    fs.writeFileSync(tempFilePath, buffer);
+    
+    console.log('[AUTO-UPDATE] Downloaded to:', tempFilePath);
+    
+    // Update package.json version
+    const newPackageJson = { ...packageJson, version: latestVersion };
+    fs.writeFileSync(
+      path.join(__dirname, 'package.json'),
+      JSON.stringify(newPackageJson, null, 2)
+    );
+    
+    // Extract source code (overwrite existing files)
+    const { spawn } = require('child_process');
+    
+    console.log('[AUTO-UPDATE] Extracting source code...');
+    
+    const extractProcess = spawn('powershell', [
+      '-Command',
+      `Expand-Archive -Path '${tempFilePath}' -DestinationPath '${__dirname}' -Force`
+    ]);
+    
+    extractProcess.on('close', (code) => {
+      if (code === 0) {
+        console.log('[AUTO-UPDATE] Source code extracted successfully');
+        
+        // Clean up temp file
+        try {
+          fs.unlinkSync(tempFilePath);
+        } catch (e) {
+          console.log('[AUTO-UPDATE] Could not delete temp file:', e.message);
+        }
+        
+        // Update global version cache
+        delete require.cache[require.resolve('./package.json')];
+        
+        console.log('[AUTO-UPDATE] Hot-reload completed!');
+        console.log(`[AUTO-UPDATE] Updated from ${currentVersion} to ${latestVersion}`);
+        
+        // Notify all connected clients via WebSocket or SSE (optional)
+        // For now, just log the completion
+        
+      } else {
+        console.error('[AUTO-UPDATE] Extraction failed with code:', code);
+      }
+    });
+    
+    res.json({
+      success: true,
+      message: 'Hot-reload update completed! No restart needed.',
+      currentVersion,
+      latestVersion,
+      downloadUrl,
+      fileName,
+      hotReload: true
+    });
+    
+  } catch (error) {
+    console.error('[AUTO-UPDATE] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Hot-reload update failed: ' + error.message
+    });
+  }
+});
+
+// POST /api/auto-update-restart - Traditional update with restart (fallback)
+app.post('/api/auto-update-restart', async (req, res) => {
+  try {
+    console.log('[AUTO-UPDATE-RESTART] Starting restart update...');
+    
+    // Get latest release info
+    const packageJson = require('./package.json');
+    const currentVersion = packageJson.version;
+    
+    // Get update server config
+    let updateUrl = 'https://api.github.com/repos/username/pos-premium/releases/latest';
+    let updateHeaders = { 'User-Agent': 'POS-App-UpdateChecker' };
+    
+    try {
+      const config = await readData('update-server-config.json').catch(() => ({}));
+      if (config && config.url) {
+        updateUrl = config.url;
+        updateHeaders = { ...updateHeaders, ...(config.headers || {}) };
+      }
+    } catch (configError) {
+      console.log('[AUTO-UPDATE-RESTART] Using default config:', configError.message);
+    }
+    
+    // Fetch latest release
+    const response = await fetch(updateUrl, {
+      headers: updateHeaders,
+      timeout: 30000
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch release: ${response.status}`);
+    }
+    
+    const release = await response.json();
+    const latestVersion = release.tag_name.replace('v', '');
+    
+    // Check if update needed
+    if (compareVersions(latestVersion, currentVersion) <= 0) {
+      return res.json({
+        success: false,
+        message: 'Already up to date',
+        currentVersion,
+        latestVersion
+      });
+    }
+    
+    // Find executable download link
+    let downloadUrl = null;
+    let fileName = null;
+    
+    if (release.assets && Array.isArray(release.assets)) {
+      // Look for Windows executable
+      const exeAsset = release.assets.find(asset => 
+        asset.name.endsWith('.exe') || 
+        asset.name.endsWith('.zip') ||
+        asset.name.includes('win') ||
+        asset.name.includes('windows')
+      );
+      
+      if (exeAsset) {
+        downloadUrl = exeAsset.browser_download_url;
+        fileName = exeAsset.name;
+      }
+    }
+    
+    if (!downloadUrl) {
+      throw new Error('No suitable download asset found');
+    }
+    
+    console.log('[AUTO-UPDATE-RESTART] Downloading:', downloadUrl);
+    
+    // Download the file
+    const fs = require('fs');
+    const path = require('path');
+    
+    const downloadResponse = await fetch(downloadUrl, {
+      headers: updateHeaders,
+      timeout: 60000
+    });
+    
+    if (!downloadResponse.ok) {
+      throw new Error(`Download failed: ${downloadResponse.status}`);
+    }
+    
+    // Save to temp directory
+    const tempDir = path.join(__dirname, 'temp');
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    
+    const tempFilePath = path.join(tempDir, fileName || `update-${latestVersion}.zip`);
+    
+    // Get response data as buffer and write to file
+    const arrayBuffer = await downloadResponse.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    fs.writeFileSync(tempFilePath, buffer);
+    
+    console.log('[AUTO-UPDATE-RESTART] Downloaded to:', tempFilePath);
+    
+    // Create update script
+    const updateScript = `@echo off
+echo Starting restart update...
+echo Current version: ${currentVersion}
+echo New version: ${latestVersion}
+
+echo Stopping application...
+taskkill /F /IM node.exe /T 2>nul
+
+echo Waiting for processes to stop...
+timeout /t 3 /nobreak >nul
+
+echo Extracting update...
+if "${fileName}" LIKE "%.zip" (
+    powershell -Command "Expand-Archive -Path '${tempFilePath}' -DestinationPath '${__dirname}' -Force"
+) else (
+    copy "${tempFilePath}" "${__dirname}\\pos-web-app.exe" /Y
+)
+
+echo Cleaning up...
+del "${tempFilePath}" /F /Q 2>nul
+
+echo Update completed!
+echo Restarting application...
+cd /d "${__dirname}"
+start cmd /k "node server.js"
+
+exit
+`;
+    
+    const scriptPath = path.join(tempDir, 'update-restart.bat');
+    fs.writeFileSync(scriptPath, updateScript);
+    
+    console.log('[AUTO-UPDATE-RESTART] Update script created:', scriptPath);
+    
+    // Execute update script and exit
+    const { spawn } = require('child_process');
+    
+    spawn('cmd', ['/c', scriptPath], {
+      detached: true,
+      stdio: 'ignore',
+      cwd: __dirname
+    }).unref();
+    
+    // Give script time to start
+    setTimeout(() => {
+      console.log('[AUTO-UPDATE-RESTART] Exiting for update...');
+      process.exit(0);
+    }, 2000);
+    
+    res.json({
+      success: true,
+      message: 'Restart update started. Application will restart.',
+      currentVersion,
+      latestVersion,
+      downloadUrl,
+      fileName,
+      hotReload: false
+    });
+    
+  } catch (error) {
+    console.error('[AUTO-UPDATE-RESTART] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Restart update failed: ' + error.message
+    });
+  }
+});
+
+// GET /api/app-version - Get application version
+app.get('/api/app-version', async (req, res) => {
+  try {
+    const packageJson = require('./package.json');
+    res.json({
+      success: true,
+      version: packageJson.version,
+      name: packageJson.name || 'POS Premium'
+    });
+  } catch (error) {
+    console.error('Error getting app version:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Gagal mengambil versi aplikasi'
     });
   }
 });
