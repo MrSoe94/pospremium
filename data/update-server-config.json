@@ -1,1 +1,12 @@
-ENC1:WC0mYcX+aPar0RcLbAZahg==:RYw1woaC0zgs1u4r:VKFpLtqHrzwX5fCc/ZfpPA==:HC9YJEMunXbdtIcYkTcnvAKG7mzXH+lnYd9VX/sGoIjMLK1k1qajvWuYzMaghUqdN8CNDhP7JFx1ru4STBc8QtzLFcjwIHCm5slBXWCf+UyJKD6B1xu+K8Z/ctQrGIXI8za6hol2rmzxIFFneZxfjUabQS3/VVkfnjJRFOLQRo6c/y6Up95aD7/2yEW3oFBjrbg783m9WjXmb6X8HmRMn5344Cj9UkAMmVtPYQXjnYyTyH+Gvmdbvlpj/BaAGDzdh666hjS0GX1w2By4Sn/GReCfYR8F2ttgJLvPiUNUzXicRREzsxxG6GQg18MJtwSIYRl1oPu4cETHUmJw0+VmovBUK1PyGuf5UFT4SKeVhPeOhTX+sjn/SFAcbFxSnVUxeWhzKSfxsM79OCV/EmuoAWRYl3LwDeUfijYJXJOrMn56s5BoydbKWNxxV1hujDxvI5myVQaLy6jVYil1+4kui3fYUXzuNa61WAr+ljCvP7+vLNT1PZe75iUItY0VoqaZPaW/nzTv+dhvfCEFg/c=
+{
+  "url": "https://api.github.com/repos/MrSoe94/pospremium/releases/latest",
+  "name": "pospremium",
+  "headers": {
+    "Authorization": "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",
+    "User-Agent": "POS-App-UpdateChecker"
+  },
+  "checkInterval": 24,
+  "autoCheckEnabled": true,
+  "updatedAt": "2025-12-10T01:01:36.865Z",
+  "version": "1.0.0"
+}

@@ -1,1 +1,18 @@
-[]
+[
+  {
+    "id": "SHIFT-20251222-1766445928983",
+    "cashierId": "1",
+    "cashierUsername": "admin",
+    "cashierName": "Admin",
+    "openedAt": 1766445928983,
+    "closedAt": 1766445966860,
+    "openingCash": 200000,
+    "closingCash": 240000,
+    "expectedCash": 240000,
+    "cashSales": 40000,
+    "nonCashSales": 0,
+    "totalSales": 40000,
+    "cashVariance": 0,
+    "transactionsCount": 1
+  }
+]

@@ -2880,7 +2880,7 @@ app.post('/api/transactions', isAuthenticated, isAdminOrCashier, async (req, res
     let products = await readData('products.json'); if (!Array.isArray(products)) products = [];
 
     // Compute totals
-    const subtotal = items.reduce((s, it) => s + (Number(it.price||0) * Number(it.qty||0)), 0);
+    const subtotal = items.reduce((s, it) => s + (Number(it.price||0) * Number(it.quantity || it.qty || 0)), 0);
     const discAmt = Number(discountAmount||0) > 0 ? Number(discountAmount||0) : Math.round(subtotal * (Number(discountPercent||0)/100));
     const taxAmount = 0;
     const serviceAmount = 0;
@@ -2890,8 +2890,8 @@ app.post('/api/transactions', isAuthenticated, isAdminOrCashier, async (req, res
     for (const it of items) {
       const idx = products.findIndex(p => String(p.id) === String(it.productId));
       if (idx >= 0) {
-        products[idx].stock = Math.max(0, Number(products[idx].stock||0) - Number(it.qty||0));
-        try { await appendStockMove({ productId: it.productId, delta: -Number(it.qty||0), reason: 'sale', by: (req.session && req.session.user && req.session.user.username) || '' }); } catch {}
+        products[idx].stock = Math.max(0, Number(products[idx].stock||0) - Number(it.quantity || it.qty || 0));
+        try { await appendStockMove({ productId: it.productId, delta: -Number(it.quantity || it.qty || 0), reason: 'sale', by: (req.session && req.session.user && req.session.user.username) || '' }); } catch {}
       }
     }
 
@@ -2904,7 +2904,14 @@ app.post('/api/transactions', isAuthenticated, isAdminOrCashier, async (req, res
       change: Number(amountReceived||0) - totalAmount,
       customerId,
       customerName,
-      items: items.map(it => ({ productId: it.productId, name: it.name, price: Number(it.price||0), qty: Number(it.qty||0) })),
+      items: items.map(it => ({ 
+        productId: it.productId, 
+        name: it.name, 
+        price: Number(it.price||0), 
+        qty: Number(it.quantity || it.qty || 0),
+        quantity: Number(it.quantity || it.qty || 0),
+        ...(it.variant && { variant: it.variant })
+      })),
       subtotal,
       discountAmount: discAmt,
       taxAmount,
@@ -4337,18 +4344,22 @@ app.post("/api/products", isAuthenticated, isAdmin, async (req, res) => {
     let qrCode = (req.body.qrCode || "").trim();
     if (!qrCode) qrCode = sku; // fallback QR to SKU if empty
 
-    // Sanitize unitPrices if provided (preserve optional note/desc/keterangan)
+    // Sanitize unitPrices if provided (preserve optional note/desc/keterangan, sku, photo)
     let unitPrices = Array.isArray(req.body.unitPrices) ? req.body.unitPrices : [];
     if (Array.isArray(unitPrices)) {
       unitPrices = unitPrices
         .map((v) => {
           const note = (v.note || v.desc || v.keterangan || '').toString().trim();
+          const sku = (v.sku || '').toString().trim();
+          const photo = (v.photo || '').toString().trim();
           const o = {
             qty: Number(v.qty) || 0,
             unit: (v.unit || '').toString().trim(),
             price: Number(v.price) || 0,
           };
           if (note) o.note = note;
+          if (sku) o.sku = sku;
+          if (photo) o.photo = photo;
           return o;
         })
         .filter((v) => v.qty > 0 && v.price >= 0 && v.unit);
@@ -4434,18 +4445,22 @@ app.put("/api/products/:id", isAuthenticated, isAdmin, async (req, res) => {
       let qrCode = req.body.qrCode !== undefined ? String(req.body.qrCode || "").trim() : String(products[index].qrCode || "");
       if (!qrCode) qrCode = rawSku; // fallback to SKU if empty
 
-      // Sanitize unitPrices if provided in update (preserve optional note/desc/keterangan)
+      // Sanitize unitPrices if provided in update (preserve optional note/desc/keterangan, sku, photo)
       let unitPricesU = Array.isArray(req.body.unitPrices) ? req.body.unitPrices : (products[index].unitPrices || []);
       if (Array.isArray(unitPricesU)) {
         unitPricesU = unitPricesU
           .map((v) => {
             const note = (v.note || v.desc || v.keterangan || '').toString().trim();
+            const sku = (v.sku || '').toString().trim();
+            const photo = (v.photo || '').toString().trim();
             const o = {
               qty: Number(v.qty) || 0,
               unit: (v.unit || '').toString().trim(),
               price: Number(v.price) || 0,
             };
             if (note) o.note = note;
+            if (sku) o.sku = sku;
+            if (photo) o.photo = photo;
             return o;
           })
           .filter((v) => v.qty > 0 && v.price >= 0 && v.unit);
@@ -4937,14 +4952,26 @@ app.get('/api/check-update', async (req, res) => {
           throw new Error('Format response tidak dikenali');
         }
         
-        // Bandingkan versi
+        // Bandingkan versi dan cek ketersediaan ZIP
         const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
+        
+        // Check if ZIP file is available for hot-reload
+        let hasZipFile = false;
+        let hasExeFile = false;
+        if (release.assets && release.assets.length > 0) {
+          const zipAsset = release.assets.find(asset => asset.name.endsWith('.zip'));
+          const exeAsset = release.assets.find(asset => asset.name.endsWith('.exe'));
+          hasZipFile = !!zipAsset;
+          hasExeFile = !!exeAsset;
+        }
         
         return res.json({
           success: true,
           currentVersion,
           latestVersion,
           hasUpdate,
+          hasZipFile,
+          hasExeFile,
           releaseInfo,
           updateServer: {
             url: updateUrl,
@@ -5132,26 +5159,10 @@ app.get('/api/dev/system-info', async (req, res) => {
   }
 });
 
-// POST /api/auto-update - Auto update aplikasi (Hot Reload)
+// POST /api/auto-update - Auto update aplikasi
 app.post('/api/auto-update', async (req, res) => {
   try {
-    console.log('[AUTO-UPDATE] Starting hot-reload update...');
-    
-    // Check if running in CodeSandbox or similar environment
-    const isCodeSandbox = process.env.CODESANDBOX_SSE || 
-                         process.env.SANDBOX_URL || 
-                         req.headers.host?.includes('codesandbox') ||
-                         req.hostname?.includes('codesandbox');
-    
-    if (isCodeSandbox) {
-      console.log('[AUTO-UPDATE] CodeSandbox detected, using fallback...');
-      return res.json({
-        success: false,
-        message: 'Auto-update tidak didukung di CodeSandbox. Silakan update manual melalui GitHub.',
-        isCodeSandbox: true,
-        manualUpdateUrl: 'https://github.com/MrSoe94/pospremium/releases'
-      });
-    }
+    console.log('[AUTO-UPDATE] Starting auto-update process...');
     
     // Get latest release info
     const packageJson = require('./package.json');
@@ -5194,192 +5205,37 @@ app.post('/api/auto-update', async (req, res) => {
       });
     }
     
-    // Find source code download link
+    console.log('[AUTO-UPDATE] Update available:', currentVersion, '→', latestVersion);
+    
+    // Find download URL and check ZIP availability
     let downloadUrl = null;
     let fileName = null;
+    let hasZipFile = false;
     
-    if (release.assets && Array.isArray(release.assets)) {
-      // Look for source code zip
-      const sourceAsset = release.assets.find(asset => 
-        asset.name.endsWith('.zip') && 
-        (asset.name.includes('source') || 
-         asset.name.includes('src') || 
-         asset.name === 'source-code.zip')
-      );
+    if (release.assets && release.assets.length > 0) {
+      // Look for .zip file first, then .exe
+      const zipAsset = release.assets.find(asset => asset.name.endsWith('.zip'));
+      const exeAsset = release.assets.find(asset => asset.name.endsWith('.exe'));
       
-      if (sourceAsset) {
-        downloadUrl = sourceAsset.browser_download_url;
-        fileName = sourceAsset.name;
-      }
-    }
-    
-    if (!downloadUrl) {
-      // Fallback to release page
-      downloadUrl = release.html_url;
-      fileName = `source-${latestVersion}.zip`;
-    }
-    
-    console.log('[AUTO-UPDATE] Downloading source:', downloadUrl);
-    
-    // Download the source code
-    const fs = require('fs');
-    const path = require('path');
-    
-    const downloadResponse = await fetch(downloadUrl, {
-      headers: updateHeaders,
-      timeout: 60000
-    });
-    
-    if (!downloadResponse.ok) {
-      throw new Error(`Download failed: ${downloadResponse.status}`);
-    }
-    
-    // Save to temp directory
-    const tempDir = path.join(__dirname, 'temp');
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
-    
-    const tempFilePath = path.join(tempDir, fileName || `source-${latestVersion}.zip`);
-    
-    // Get response data as buffer and write to file
-    const arrayBuffer = await downloadResponse.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    fs.writeFileSync(tempFilePath, buffer);
-    
-    console.log('[AUTO-UPDATE] Downloaded to:', tempFilePath);
-    
-    // Update package.json version
-    const newPackageJson = { ...packageJson, version: latestVersion };
-    fs.writeFileSync(
-      path.join(__dirname, 'package.json'),
-      JSON.stringify(newPackageJson, null, 2)
-    );
-    
-    // Extract source code (overwrite existing files)
-    const { spawn } = require('child_process');
-    
-    console.log('[AUTO-UPDATE] Extracting source code...');
-    
-    const extractProcess = spawn('powershell', [
-      '-Command',
-      `Expand-Archive -Path '${tempFilePath}' -DestinationPath '${__dirname}' -Force`
-    ]);
-    
-    extractProcess.on('close', (code) => {
-      if (code === 0) {
-        console.log('[AUTO-UPDATE] Source code extracted successfully');
-        
-        // Clean up temp file
-        try {
-          fs.unlinkSync(tempFilePath);
-        } catch (e) {
-          console.log('[AUTO-UPDATE] Could not delete temp file:', e.message);
-        }
-        
-        // Update global version cache
-        delete require.cache[require.resolve('./package.json')];
-        
-        console.log('[AUTO-UPDATE] Hot-reload completed!');
-        console.log(`[AUTO-UPDATE] Updated from ${currentVersion} to ${latestVersion}`);
-        
-        // Notify all connected clients via WebSocket or SSE (optional)
-        // For now, just log the completion
-        
-      } else {
-        console.error('[AUTO-UPDATE] Extraction failed with code:', code);
-      }
-    });
-    
-    res.json({
-      success: true,
-      message: 'Hot-reload update completed! No restart needed.',
-      currentVersion,
-      latestVersion,
-      downloadUrl,
-      fileName,
-      hotReload: true
-    });
-    
-  } catch (error) {
-    console.error('[AUTO-UPDATE] Error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Hot-reload update failed: ' + error.message
-    });
-  }
-});
-
-// POST /api/auto-update-restart - Traditional update with restart (fallback)
-app.post('/api/auto-update-restart', async (req, res) => {
-  try {
-    console.log('[AUTO-UPDATE-RESTART] Starting restart update...');
-    
-    // Get latest release info
-    const packageJson = require('./package.json');
-    const currentVersion = packageJson.version;
-    
-    // Get update server config
-    let updateUrl = 'https://api.github.com/repos/username/pos-premium/releases/latest';
-    let updateHeaders = { 'User-Agent': 'POS-App-UpdateChecker' };
-    
-    try {
-      const config = await readData('update-server-config.json').catch(() => ({}));
-      if (config && config.url) {
-        updateUrl = config.url;
-        updateHeaders = { ...updateHeaders, ...(config.headers || {}) };
-      }
-    } catch (configError) {
-      console.log('[AUTO-UPDATE-RESTART] Using default config:', configError.message);
-    }
-    
-    // Fetch latest release
-    const response = await fetch(updateUrl, {
-      headers: updateHeaders,
-      timeout: 30000
-    });
-    
-    if (!response.ok) {
-      throw new Error(`Failed to fetch release: ${response.status}`);
-    }
-    
-    const release = await response.json();
-    const latestVersion = release.tag_name.replace('v', '');
-    
-    // Check if update needed
-    if (compareVersions(latestVersion, currentVersion) <= 0) {
-      return res.json({
-        success: false,
-        message: 'Already up to date',
-        currentVersion,
-        latestVersion
-      });
-    }
-    
-    // Find executable download link
-    let downloadUrl = null;
-    let fileName = null;
-    
-    if (release.assets && Array.isArray(release.assets)) {
-      // Look for Windows executable
-      const exeAsset = release.assets.find(asset => 
-        asset.name.endsWith('.exe') || 
-        asset.name.endsWith('.zip') ||
-        asset.name.includes('win') ||
-        asset.name.includes('windows')
-      );
-      
-      if (exeAsset) {
+      if (zipAsset) {
+        downloadUrl = zipAsset.browser_download_url;
+        fileName = zipAsset.name;
+        hasZipFile = true;
+      } else if (exeAsset) {
         downloadUrl = exeAsset.browser_download_url;
         fileName = exeAsset.name;
+        hasZipFile = false;
       }
     }
     
     if (!downloadUrl) {
-      throw new Error('No suitable download asset found');
+      // Fallback to release page (only for traditional mode)
+      downloadUrl = release.html_url;
+      fileName = `release-${latestVersion}.html`;
+      hasZipFile = false;
     }
     
-    console.log('[AUTO-UPDATE-RESTART] Downloading:', downloadUrl);
+    console.log('[AUTO-UPDATE] Downloading:', downloadUrl, 'File:', fileName, 'Has ZIP:', hasZipFile);
     
     // Download the file
     const fs = require('fs');
@@ -5387,14 +5243,14 @@ app.post('/api/auto-update-restart', async (req, res) => {
     
     const downloadResponse = await fetch(downloadUrl, {
       headers: updateHeaders,
-      timeout: 60000
+      timeout: 60000 // 1 minute timeout
     });
     
     if (!downloadResponse.ok) {
       throw new Error(`Download failed: ${downloadResponse.status}`);
     }
     
-    // Save to temp directory
+    // Create temp directory
     const tempDir = path.join(__dirname, 'temp');
     if (!fs.existsSync(tempDir)) {
       fs.mkdirSync(tempDir, { recursive: true });
@@ -5407,266 +5263,303 @@ app.post('/api/auto-update-restart', async (req, res) => {
     const buffer = Buffer.from(arrayBuffer);
     fs.writeFileSync(tempFilePath, buffer);
     
-    console.log('[AUTO-UPDATE-RESTART] Downloaded to:', tempFilePath);
+    console.log('[AUTO-UPDATE] Downloaded to:', tempFilePath);
     
-    // Create update script
-    const updateScript = `@echo off
-echo Starting restart update...
+    // Check if hot-reload is requested
+    const { hotReload = false } = req.body;
+    
+    if (hotReload) {
+      // Hot-reload mode - extract and replace files without restart
+      console.log('[AUTO-UPDATE] Using hot-reload mode...');
+      
+      // Check file type and extract accordingly
+      if (!fileName) {
+        throw new Error('File name tidak valid untuk hot-reload.');
+      }
+      
+      // Extract update files
+      const extractPath = path.join(tempDir, 'extracted');
+      if (!fs.existsSync(extractPath)) {
+        fs.mkdirSync(extractPath, { recursive: true });
+      }
+      
+      if (fileName.endsWith('.zip')) {
+        // Extract ZIP file
+        const AdmZip = require('adm-zip');
+        const zip = new AdmZip(tempFilePath);
+        zip.extractAllTo(extractPath, true);
+        console.log('[AUTO-UPDATE] ZIP file extracted to:', extractPath);
+        
+      } else if (fileName.endsWith('.exe')) {
+        // Extract EXE file using 7-Zip
+        console.log('[AUTO-UPDATE] Extracting EXE file...');
+        
+        const { spawn } = require('child_process');
+        const sevenZipPath = path.join(__dirname, 'node_modules', '7zip-bin', 'win', '7za.exe');
+        
+        // Try to find 7za.exe in common locations
+        let sevenZipExecutable = null;
+        const possiblePaths = [
+          sevenZipPath,
+          path.join(process.env.ProgramFiles || 'C:\\Program Files', '7-Zip', '7z.exe'),
+          path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', '7-Zip', '7z.exe'),
+          '7z.exe', // If in PATH
+          '7za.exe' // If in PATH
+        ];
+        
+        for (const possiblePath of possiblePaths) {
+          if (fs.existsSync(possiblePath)) {
+            sevenZipExecutable = possiblePath;
+            break;
+          }
+        }
+        
+        if (!sevenZipExecutable) {
+          throw new Error('7-Zip tidak ditemukan. Silakan install 7-Zip atau gunakan Traditional mode.');
+        }
+        
+        // Extract EXE using 7-Zip
+        await new Promise((resolve, reject) => {
+          const process = spawn(sevenZipExecutable, ['x', tempFilePath, `-o${extractPath}`, '-y'], {
+            stdio: 'pipe'
+          });
+          
+          let output = '';
+          process.stdout.on('data', (data) => {
+            output += data.toString();
+          });
+          
+          process.stderr.on('data', (data) => {
+            output += data.toString();
+          });
+          
+          process.on('close', (code) => {
+            if (code === 0) {
+              console.log('[AUTO-UPDATE] EXE file extracted successfully');
+              resolve();
+            } else {
+              console.error('[AUTO-UPDATE] EXE extraction failed:', output);
+              reject(new Error('Gagal mengekstrak EXE file. Code: ' + code));
+            }
+          });
+          
+          process.on('error', (err) => {
+            console.error('[AUTO-UPDATE] EXE extraction error:', err);
+            reject(err);
+          });
+        });
+        
+        console.log('[AUTO-UPDATE] EXE file extracted to:', extractPath);
+        
+      } else {
+        throw new Error('Hot-reload hanya support file ZIP dan EXE. Format tidak dikenali: ' + fileName);
+      }
+      
+      // Prepare for graceful hot-reload
+      const appDir = __dirname;
+      const extractedFiles = getAllFiles(extractPath);
+      
+      // Create backup of critical files
+      const criticalFiles = ['server.js', 'package.json'];
+      const backupDir = path.join(tempDir, 'backup');
+      if (!fs.existsSync(backupDir)) {
+        fs.mkdirSync(backupDir, { recursive: true });
+      }
+      
+      for (const criticalFile of criticalFiles) {
+        const sourcePath = path.join(appDir, criticalFile);
+        if (fs.existsSync(sourcePath)) {
+          const backupPath = path.join(backupDir, criticalFile);
+          fs.copyFileSync(sourcePath, backupPath);
+          console.log('[AUTO-UPDATE] Backed up:', criticalFile);
+        }
+      }
+      
+      // Stage 1: Update non-critical files first
+      const nonCriticalFiles = extractedFiles.filter(file => {
+        const relativePath = path.relative(extractPath, file);
+        return !criticalFiles.includes(path.basename(relativePath));
+      });
+      
+      for (const file of nonCriticalFiles) {
+        const relativePath = path.relative(extractPath, file);
+        const targetPath = path.join(appDir, relativePath);
+        
+        // Skip certain system files and directories
+        if (relativePath.includes('uninstall') || 
+            relativePath.includes('setup') ||
+            relativePath.includes('installer') ||
+            relativePath.endsWith('.exe') && !relativePath.includes('pos-web-app.exe')) {
+          console.log('[AUTO-UPDATE] Skipping system file:', relativePath);
+          continue;
+        }
+        
+        // Ensure target directory exists
+        const targetDir = path.dirname(targetPath);
+        if (!fs.existsSync(targetDir)) {
+          fs.mkdirSync(targetDir, { recursive: true });
+        }
+        
+        // Copy file
+        fs.copyFileSync(file, targetPath);
+        console.log('[AUTO-UPDATE] Updated (non-critical):', relativePath);
+      }
+      
+      // Stage 2: Schedule critical file updates for next event loop
+      setTimeout(() => {
+        try {
+          console.log('[AUTO-UPDATE] Starting critical file updates...');
+          
+          // Update package.json first
+          const packageJsonPath = path.join(appDir, 'package.json');
+          if (fs.existsSync(packageJsonPath)) {
+            const packageData = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+            packageData.version = latestVersion;
+            fs.writeFileSync(packageJsonPath, JSON.stringify(packageData, null, 2));
+            console.log('[AUTO-UPDATE] Updated package.json');
+          }
+          
+          // Update server.js last
+          const serverJsPath = path.join(extractPath, 'server.js');
+          if (fs.existsSync(serverJsPath)) {
+            const targetServerJsPath = path.join(appDir, 'server.js');
+            fs.copyFileSync(serverJsPath, targetServerJsPath);
+            console.log('[AUTO-UPDATE] Updated server.js');
+          }
+          
+          // Clear require cache for updated files
+          Object.keys(require.cache).forEach(key => {
+            if (key.includes(appDir) && !key.includes('node_modules')) {
+              delete require.cache[key];
+            }
+          });
+          
+          console.log('[AUTO-UPDATE] Hot-reload completed successfully!');
+          
+          // Clean up temp files
+          fs.rmSync(tempDir, { recursive: true, force: true });
+          
+        } catch (error) {
+          console.error('[AUTO-UPDATE] Error in critical file update:', error);
+          // Restore from backup if needed
+          try {
+            for (const criticalFile of criticalFiles) {
+              const backupPath = path.join(backupDir, criticalFile);
+              const targetPath = path.join(appDir, criticalFile);
+              if (fs.existsSync(backupPath)) {
+                fs.copyFileSync(backupPath, targetPath);
+                console.log('[AUTO-UPDATE] Restored backup:', criticalFile);
+              }
+            }
+          } catch (restoreError) {
+            console.error('[AUTO-UPDATE] Failed to restore backup:', restoreError);
+          }
+        }
+      }, 1000); // Delay critical updates by 1 second
+      
+      // Respond to client immediately
+      res.json({
+        success: true,
+        message: 'Hot-reload update initiated! Server will update files in background.',
+        currentVersion,
+        latestVersion,
+        hotReload: true
+      });
+      
+    } else {
+      // Traditional mode - restart server
+      console.log('[AUTO-UPDATE] Using traditional restart mode...');
+      
+      // Create update script
+      const updateScript = `
+@echo off
+echo Starting update process...
 echo Current version: ${currentVersion}
 echo New version: ${latestVersion}
 
 echo Stopping application...
 taskkill /F /IM node.exe /T 2>nul
-
-echo Waiting for processes to stop...
-timeout /t 3 /nobreak >nul
+timeout /t 2 /nobreak >nul
 
 echo Extracting update...
-if "${fileName}" LIKE "%.zip" (
-    powershell -Command "Expand-Archive -Path '${tempFilePath}' -DestinationPath '${__dirname}' -Force"
-) else (
-    copy "${tempFilePath}" "${__dirname}\\pos-web-app.exe" /Y
-)
+powershell -Command "Expand-Archive -Path '${tempFilePath.replace(/\\/g, '\\')}' -DestinationPath '${__dirname.replace(/\\/g, '\\')}' -Force"
 
 echo Cleaning up...
-del "${tempFilePath}" /F /Q 2>nul
+rmdir /s /q "${path.dirname(tempFilePath).replace(/\\/g, '\\')}"
 
 echo Update completed!
 echo Restarting application...
-cd /d "${__dirname}"
-start cmd /k "node server.js"
+start "" "${__dirname}\\pos-web-app.exe"
 
 exit
 `;
-    
-    const scriptPath = path.join(tempDir, 'update-restart.bat');
-    fs.writeFileSync(scriptPath, updateScript);
-    
-    console.log('[AUTO-UPDATE-RESTART] Update script created:', scriptPath);
-    
-    // Execute update script and exit
-    const { spawn } = require('child_process');
-    
-    spawn('cmd', ['/c', scriptPath], {
-      detached: true,
-      stdio: 'ignore',
-      cwd: __dirname
-    }).unref();
-    
-    // Give script time to start
-    setTimeout(() => {
-      console.log('[AUTO-UPDATE-RESTART] Exiting for update...');
-      process.exit(0);
-    }, 2000);
-    
-    res.json({
-      success: true,
-      message: 'Restart update started. Application will restart.',
-      currentVersion,
-      latestVersion,
-      downloadUrl,
-      fileName,
-      hotReload: false
-    });
+      
+      const scriptPath = path.join(tempDir, 'update.bat');
+      fs.writeFileSync(scriptPath, updateScript);
+      
+      console.log('[AUTO-UPDATE] Update script created:', scriptPath);
+      
+      // Execute update script and exit
+      const { spawn } = require('child_process');
+      
+      // Detach from current process
+      spawn('cmd', ['/c', scriptPath], {
+        detached: true,
+        stdio: 'ignore',
+        cwd: __dirname
+      }).unref();
+      
+      // Give script time to start
+      setTimeout(() => {
+        console.log('[AUTO-UPDATE] Exiting for update...');
+        process.exit(0);
+      }, 2000);
+      
+      res.json({
+        success: true,
+        message: 'Update process started. Application will restart.',
+        currentVersion,
+        latestVersion,
+        downloadUrl,
+        fileName
+      });
+    }
     
   } catch (error) {
-    console.error('[AUTO-UPDATE-RESTART] Error:', error);
+    console.error('[AUTO-UPDATE] Error:', error);
     res.status(500).json({
       success: false,
-      message: 'Restart update failed: ' + error.message
+      message: 'Auto update failed: ' + error.message
     });
   }
 });
 
-// GET /api/app-version - Get application version
-app.get('/api/app-version', async (req, res) => {
-  try {
-    const packageJson = require('./package.json');
-    res.json({
-      success: true,
-      version: packageJson.version,
-      name: packageJson.name || 'POS Premium'
-    });
-  } catch (error) {
-    console.error('Error getting app version:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Gagal mengambil versi aplikasi'
-    });
+// Helper function to get all files recursively
+function getAllFiles(dir) {
+  const fs = require('fs');
+  const path = require('path');
+  const files = [];
+  
+  function traverse(currentDir) {
+    const items = fs.readdirSync(currentDir);
+    
+    for (const item of items) {
+      const fullPath = path.join(currentDir, item);
+      const stat = fs.statSync(fullPath);
+      
+      if (stat.isDirectory()) {
+        traverse(fullPath);
+      } else {
+        files.push(fullPath);
+      }
+    }
   }
-});
+  
+  traverse(dir);
+  return files;
+}
 
 // Store a single settings object in settings.json
-app.get('/api/settings', isAuthenticated, async (req, res) => {
-  try {
-    const raw = await readData('settings.json');
-    const base = Array.isArray(raw) ? {} : (raw || {});
-    // Defaults
-    let storeName = base.storeName || 'POS System';
-    try {
-      const licensed = await getLicensedStoreName();
-      if (licensed) storeName = licensed;
-    } catch (e) {}
-    const settings = {
-      storeName,
-      faviconBase64: base.faviconBase64 || '',
-      logoBase64: base.logoBase64 || '',
-      taxRate: typeof base.taxRate === 'number' ? base.taxRate : 0,
-      serviceRate: typeof base.serviceRate === 'number' ? base.serviceRate : 0,
-      priceIncludesTax: typeof base.priceIncludesTax === 'boolean' ? base.priceIncludesTax : false,
-      currencySymbol: base.currencySymbol || 'Rp',
-      thousandSeparator: base.thousandSeparator || '.',
-      decimalSeparator: base.decimalSeparator || ',',
-      currencyPrecision: typeof base.currencyPrecision === 'number' ? base.currencyPrecision : 0,
-      receiptFooter: base.receiptFooter || '',
-      receiptFooter1: base.receiptFooter1 || '',
-      address: base.address || '',
-      phone: base.phone || '',
-      // New fields
-      themeColor: base.themeColor || '#198754',
-      showReceiptAddress: base.showReceiptAddress !== false,
-      showReceiptPhone: base.showReceiptPhone !== false,
-      showReceiptFooter: base.showReceiptFooter !== false,
-      paperWidth: typeof base.paperWidth === 'number' ? base.paperWidth : 80,
-      loginTitle: base.loginTitle || '',
-      loginLogoBase64: base.loginLogoBase64 || '',
-      loginBackgroundBase64: base.loginBackgroundBase64 || '',
-      // Additional branding controls
-      darkMode: base.darkMode === true,
-      loginLogoSize: typeof base.loginLogoSize === 'string' ? base.loginLogoSize : 'medium',
-      // Product dangerous toggles
-      showPurgeAllProducts: base.showPurgeAllProducts === true,
-      // Auto backup config
-      autoBackup: {
-        enabled: base.autoBackup?.enabled === true,
-        mode: ['off','on_start','daily'].includes(base.autoBackup?.mode) ? base.autoBackup.mode : 'off',
-        retentionDays: Number(base.autoBackup?.retentionDays) || 0,
-        maxCount: Math.max(1, Number(base.autoBackup?.maxCount) || 10)
-      },
-      // AI config (do not expose keys if preferred; here we return as-is for local admin)
-      aiConfig: {
-        provider: base.aiConfig?.provider || 'none',
-        openaiApiKey: base.aiConfig?.openaiApiKey || '',
-        geminiApiKey: base.aiConfig?.geminiApiKey || '',
-        googleApiKey: base.aiConfig?.googleApiKey || '',
-        imageSize: base.aiConfig?.imageSize || '1024x1024'
-      },
-      paymentLogoQrisBase64: base.paymentLogoQrisBase64 || '',
-      paymentLogoDanaBase64: base.paymentLogoDanaBase64 || '',
-      paymentLogoOvoBase64: base.paymentLogoOvoBase64 || ''
-    };
-    res.json(settings);
-  } catch (e) {
-    console.error('Failed to load settings:', e);
-    return res.status(500).json({ success: false, message: 'Failed to load settings' });
-  }
-});
-
-app.put('/api/settings', isAuthenticated, isAdmin, async (req, res) => {
-  try {
-    const {
-      storeName = 'POS System',
-      faviconBase64 = '',
-      logoBase64 = '',
-      taxRate = 0,
-      serviceRate = 0,
-      priceIncludesTax = false,
-      currencySymbol = 'Rp',
-      thousandSeparator = '.',
-      decimalSeparator = ',',
-      currencyPrecision = 0,
-      receiptFooter = '',
-      receiptFooter1 = '',
-      address = '',
-      phone = '',
-      // New fields
-      themeColor = '#198754',
-      showReceiptAddress = true,
-      showReceiptPhone = true,
-      showReceiptFooter = true,
-      paperWidth = 80,
-      loginTitle = '',
-      loginLogoBase64 = '',
-      loginBackgroundBase64 = '',
-      darkMode = false,
-      loginLogoSize = 'medium',
-      // Cart sound settings
-      cartSoundBase64 = '',
-      enableCartSound = false,
-      // Dangerous product toggle
-      showPurgeAllProducts = false,
-      // auto backup
-      autoBackup = {},
-      // ai config
-      aiConfig = {},
-      paymentLogoQrisBase64 = '',
-      paymentLogoDanaBase64 = '',
-      paymentLogoOvoBase64 = ''
-    } = req.body || {};
-
-    let finalStoreName = storeName;
-    try {
-      const licensed = await getLicensedStoreName();
-      if (licensed) finalStoreName = licensed;
-    } catch (e) {}
-
-    const settings = {
-      storeName: finalStoreName,
-      faviconBase64,
-      logoBase64,
-      taxRate: Number(taxRate) || 0,
-      serviceRate: Number(serviceRate) || 0,
-      priceIncludesTax: Boolean(priceIncludesTax),
-      currencySymbol: String(currencySymbol || 'Rp'),
-      thousandSeparator: String(thousandSeparator || '.'),
-      decimalSeparator: String(decimalSeparator || ','),
-      currencyPrecision: Number(currencyPrecision) || 0,
-      receiptFooter,
-      receiptFooter1,
-      address,
-      phone,
-      // Persist new fields
-      themeColor: String(themeColor || '#198754'),
-      showReceiptAddress: Boolean(showReceiptAddress),
-      showReceiptPhone: Boolean(showReceiptPhone),
-      showReceiptFooter: Boolean(showReceiptFooter),
-      paperWidth: Number(paperWidth) || 80,
-      loginTitle: String(loginTitle || ''),
-      loginLogoBase64: loginLogoBase64 || '',
-      loginBackgroundBase64: loginBackgroundBase64 || '',
-      darkMode: Boolean(darkMode),
-      loginLogoSize: String(loginLogoSize || 'medium'),
-      // Cart sound settings
-      cartSoundBase64: cartSoundBase64 || '',
-      enableCartSound: Boolean(enableCartSound),
-      // Dangerous product toggle
-      showPurgeAllProducts: Boolean(showPurgeAllProducts),
-      // Auto backup (persist nested)
-      autoBackup: {
-        enabled: Boolean((autoBackup||{}).enabled),
-        mode: ['off','on_start','daily'].includes((autoBackup||{}).mode) ? (autoBackup||{}).mode : 'off',
-        retentionDays: Number((autoBackup||{}).retentionDays) || 0,
-        maxCount: Math.max(1, Number((autoBackup||{}).maxCount) || 10)
-      },
-      // Persist AI config (keys are stored locally in settings.json)
-      aiConfig: {
-        provider: String((aiConfig && aiConfig.provider) || 'none'),
-        openaiApiKey: String((aiConfig && aiConfig.openaiApiKey) || ''),
-        geminiApiKey: String((aiConfig && aiConfig.geminiApiKey) || ''),
-        googleApiKey: String((aiConfig && aiConfig.googleApiKey) || ''),
-        imageSize: String((aiConfig && aiConfig.imageSize) || '1024x1024')
-      },
-      paymentLogoQrisBase64: paymentLogoQrisBase64 || '',
-      paymentLogoDanaBase64: paymentLogoDanaBase64 || '',
-      paymentLogoOvoBase64: paymentLogoOvoBase64 || ''
-    };
-    await writeData('settings.json', settings);
-    res.json({ success: true, settings, message: 'Settings updated' });
-  } catch (e) {
-    console.error('Failed to save settings:', e);
-    res.status(500).json({ success: false, message: 'Failed to save settings' });
-  }
-});
 
 // --- AI Image Generation ---
 app.post('/api/ai/generate-image', isAuthenticated, isAdmin, async (req, res) => {
@@ -6345,7 +6238,10 @@ app.post("/api/transactions", isAuthenticated, async (req, res) => {
         throw new Error(`Product with ID ${item.productId} not found`);
       // Allow negative stock - no stock validation for transactions
 
-      const itemBase = product.price * item.qty;
+      // Debug: Log the item data received
+      console.log('Server processing item:', JSON.stringify(item, null, 2));
+
+      const itemBase = product.price * (item.quantity || item.qty || 0);
       baseSubtotal += itemBase;
       const pDisc = Math.max(0, Number(product.discountPercent || 0));
       const pTax = Math.max(0, Number(product.taxRate || 0));
@@ -6356,13 +6252,21 @@ app.post("/api/transactions", isAuthenticated, async (req, res) => {
       perProductTaxTotal += itemTax;
       afterItemDiscountSubtotal += itemNet;
 
-      return {
+      const returnItem = {
         productId: product.id,
         name: product.name,
         price: product.price,
-        qty: item.qty,
+        qty: item.quantity || item.qty,
+        quantity: item.quantity || item.qty,
         subtotal: itemNet,
+        // Preserve variant information if present
+        ...(item.variant && { variant: item.variant }),
       };
+      
+      // Debug: Log the item being returned
+      console.log('Server returning item:', JSON.stringify(returnItem, null, 2));
+      
+      return returnItem;
     });
 
     // compute taxes based on settings

@@ -1,1 +1,21 @@
-ENC1:ADcgs9DTFzgWrrTM+NcVlQ==:OgZzHYkovgVnesio:UVH4O/94o5fJR726afsIMw==:lH8=
+[
+  {
+    "id": "STKIN-20251223-1766462521498",
+    "timestamp": "2025-12-23T04:02:01.498Z",
+    "date": "2025-12-23",
+    "supplierId": 1765115471067,
+    "supplierName": "Garuda",
+    "items": [
+      {
+        "productId": 1761980047894,
+        "qty": 1,
+        "purchasePrice": 56000
+      }
+    ],
+    "note": "67564323445",
+    "updatedAt": 1766462591365,
+    "paidAmount": 56000,
+    "remainingAmount": 0,
+    "paymentDate": "2025-12-24"
+  }
+]

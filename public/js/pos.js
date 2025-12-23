@@ -1,3 +1,100 @@
+// Refresh button on POS page
+const refreshBtn = document.getElementById("refreshPosBtn");
+if (refreshBtn) {
+  refreshBtn.addEventListener("click", async () => {
+    if (isLoading) return;
+    try {
+      isLoading = true;
+      const original = refreshBtn.innerHTML;
+      refreshBtn.disabled = true;
+      refreshBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+      
+      // Refresh all POS data
+      await Promise.all([
+        typeof loadBanner === 'function' ? loadBanner().catch(() => {}) : Promise.resolve(),
+        typeof loadCategories === 'function' ? loadCategories().then(() => {
+          if (typeof populateCategoryDropdown === 'function') populateCategoryDropdown();
+        }).catch(() => {}) : Promise.resolve(),
+        typeof loadProducts === 'function' ? loadProducts().catch(() => {}) : Promise.resolve(),
+        typeof loadQrisImage === 'function' ? loadQrisImage().catch(() => {}) : Promise.resolve(),
+        typeof loadRecentTransactions === 'function' ? loadRecentTransactions().catch(() => {}) : Promise.resolve(),
+        typeof loadDrafts === 'function' ? loadDrafts().catch(() => {}) : Promise.resolve(),
+      ]);
+      
+      // Ensure UI reflects latest data
+      try {
+        if (typeof renderProducts === 'function') renderProducts();
+      } catch {}
+      try {
+        if (typeof renderCart === 'function') renderCart();
+      } catch {}
+      
+      refreshBtn.innerHTML = original;
+      refreshBtn.disabled = false;
+    } finally {
+      isLoading = false;
+    }
+  });
+}
+
+// Manual refresh helper
+async function refreshCartFromServer() {
+  try {
+    const r = await fetch("/api/cart", { cache: "no-store" });
+    if (!r.ok) return;
+    const data = await r.json().catch(() => ({ items: [], updatedAt: 0 }));
+    const serverTs = Number(data.updatedAt || 0);
+    cart = Array.isArray(data.items) ? data.items : [];
+    lastLocalCartAt = serverTs;
+    lastServerCartAt = serverTs;
+    try {
+      localStorage.setItem("pos_cart", JSON.stringify(cart));
+      localStorage.setItem("pos_cart_updatedAt", String(serverTs));
+    } catch {}
+
+    // Render updated cart
+    try {
+      if (typeof renderCart === 'function') renderCart();
+    } catch {}
+  } catch (err) {
+    console.warn('Failed to refresh cart from server:', err);
+  }
+}
+
+// Manual Refresh Cart button
+const refreshCartBtn = document.getElementById("refreshCartBtn");
+if (refreshCartBtn) {
+  refreshCartBtn.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Refresh';
+    try {
+      await refreshCartFromServer();
+    } finally {
+      btn.innerHTML = original;
+      btn.disabled = false;
+    }
+  });
+}
+
+// Manual Refresh Recent Transactions button
+const refreshRecentBtn = document.getElementById("refreshRecentBtn");
+if (refreshRecentBtn) {
+  refreshRecentBtn.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Refresh';
+    try {
+      await loadRecentTransactions();
+    } finally {
+      btn.innerHTML = original;
+      btn.disabled = false;
+    }
+  });
+}
+
 // --- USB Scanner Handling ---
 let usbScannerEnabled = false;
 let usbScanBuffer = '';
@@ -62,6 +159,27 @@ document.addEventListener('keydown', handleUsbKeydown);
 if (window.__POS_JS_LOADED__) {
     console.warn('pos.js already loaded, skipping second execution');
     throw new Error('pos.js already loaded');
+}
+
+// Simple audio feedback helper (no-op if audio elements not present)
+function playSound(type) {
+    try {
+        // Use custom sounds from admin settings if available
+        if (appSettings && appSettings.enableCartSound && appSettings.cartSoundBase64) {
+            const audio = new Audio(appSettings.cartSoundBase64);
+            audio.play().catch(()=>{});
+        } else {
+            // Fallback to default audio elements
+            const id = type === 'error' ? 'pos-sound-error' : 'pos-sound-beep';
+            const el = document.getElementById(id);
+            if (el && typeof el.play === 'function') {
+                el.currentTime = 0;
+                el.play().catch(()=>{});
+            }
+        }
+    } catch (e) {
+        // ignore audio errors
+    }
 }
 
 // Open camera in overlay (extracted helper)
@@ -263,6 +381,7 @@ let appSettings = null;
 let discountType = 'percent';
 let discountValue = 0;
 let selectedCustomer = { id: 'default', name: 'Pelanggan Umum' };
+let posCustomerDebts = [];
 let customers = [];
 // Variant selection state
 let selectedVariantIdx = -1;
@@ -283,6 +402,7 @@ const cartItems = document.getElementById('cartItems');
 const cartTotal = document.getElementById('cartTotal');
 const checkoutBtn = document.getElementById('checkoutBtn');
 const logoutBtn = document.getElementById('logoutBtn');
+const darkModeToggle = document.getElementById('darkModeToggle');
 const userNameSpan = document.getElementById('userName');
 const bannerContainer = document.getElementById('bannerContainer');
 const recentTransactionsList = document.getElementById('recentTransactionsList');
@@ -306,11 +426,11 @@ const filterAllBtn = document.getElementById('filterAll');
 const filterTopBtn = document.getElementById('filterTop');
 const filterBestBtn = document.getElementById('filterBest');
 const filterDiscountedBtn = document.getElementById('filterDiscounted');
-
-// Customer Selection Elements
 const customerSelect = document.getElementById('customerSelect');
 const customerInfo = document.getElementById('customerInfo');
+const posCustomerDebtsSummary = document.getElementById('posCustomerDebtsSummary');
 
+// Customer Selection Elements
 // POS Settings Modal
 let posSettingsModal, checkoutModal, transactionDetailsModal, paymentSuccessModal;
 const posSettingsBtn = document.getElementById('posSettingsBtn');
@@ -341,6 +461,9 @@ const printReceiptFromDetailsBtn = document.getElementById('printReceiptFromDeta
 // Variant modal elements
 const variantOptionsBox = document.getElementById('variantOptions');
 const confirmVariantBtn = document.getElementById('confirmVariantBtn');
+// Shift elements
+const shiftActionBtn = document.getElementById('shiftActionBtn');
+const shiftStatusLabel = document.getElementById('shiftStatusLabel');
 // Scanner toggle elements
 const scannerToggle = document.getElementById('scannerToggle');
 const scannerStatus = document.getElementById('scannerStatus');
@@ -1218,6 +1341,9 @@ function handleScannedCode(raw){
         updateScannerStatus(`kode: ${code}`);
         if (!code) return;
 
+        console.log('Scanned code:', code);
+        console.log('Products available:', products ? products.length : 0);
+
         // Build candidate codes from various QR formats
         const candidates = new Set();
         const push = (v) => { if (v != null && String(v).trim() !== '') candidates.add(String(v).trim()); };
@@ -1247,18 +1373,59 @@ function handleScannedCode(raw){
             if (compact !== v) push(compact);
         });
 
+        console.log('Candidate codes:', Array.from(candidates));
+
         // Try to find product by multiple candidates
         const lowerSet = new Set(Array.from(candidates).map(x=>x.toLowerCase()));
-        const prod = (products || []).find(p => lowerSet.has(String(p.sku||'').toLowerCase()))
+        let prod = null;
+        let variantData = null;
+        
+        // First try to find by main product SKU/QR/ID
+        prod = (products || []).find(p => lowerSet.has(String(p.sku||'').toLowerCase()))
             || (products || []).find(p => candidates.has(String(p.id)))
             || (products || []).find(p => lowerSet.has(String(p.qrCode||'').toLowerCase()));
+        
+        console.log('Found product by main SKU:', prod ? prod.name : 'No');
+
+        // If not found, try to find by variant SKU
+        if (!prod) {
+            for (const p of (products || [])) {
+                if (Array.isArray(p.unitPrices)) {
+                    for (let i = 0; i < p.unitPrices.length; i++) {
+                        const variant = p.unitPrices[i];
+                        if (variant.sku && lowerSet.has(String(variant.sku).toLowerCase())) {
+                            prod = p;
+                            variantData = {
+                                variantIndex: i,
+                                variant: variant
+                            };
+                            console.log('Found product by variant SKU:', prod.name, 'variant:', variant);
+                            break;
+                        }
+                    }
+                    if (prod) break;
+                }
+            }
+        }
 
         if (!prod) {
             updateScannerStatus(`kode tidak dikenal: ${code}`);
+            console.log('Product not found for any candidate');
             return;
         }
-        addToCart(prod.id);
-        updateScannerStatus(`ditambahkan: ${prod.name || prod.sku || prod.id}`);
+        
+        console.log('Adding to cart:', prod.name, 'variant:', variantData);
+        
+        if (variantData) {
+            // Add product with variant selection
+            addToCartWithVariant(prod.id, variantData.variantIndex);
+            updateScannerStatus(`ditambahkan: ${prod.name || prod.sku || prod.id} (${variantData.variant.qty} ${variantData.variant.unit})`);
+        } else {
+            // Add regular product
+            addToCart(prod.id);
+            updateScannerStatus(`ditambahkan: ${prod.name || prod.sku || prod.id}`);
+        }
+        
         // Close camera immediately (no auto reopen)
         try { forceCloseCameraUI(); } catch (e) {}
     } catch (err) {
@@ -1485,7 +1652,9 @@ function computeTotals() {
     let afterItemDiscountSubtotal = 0;
     items.forEach((item) => {
         const product = products.find(p => p.id === item.productId) || {};
-        const itemBase = (item.price || 0) * (item.qty || 0);
+        // Gunakan quantity baru, fallback ke qty lama
+        const itemQty = (item.quantity != null ? item.quantity : item.qty) || 0;
+        const itemBase = (item.price || 0) * itemQty;
         baseSubtotal += itemBase;
         const pDisc = Math.max(0, Number(product.discountPercent || 0));
         const pTax = Math.max(0, Number(product.taxRate || 0));
@@ -1533,41 +1702,160 @@ async function loadSettingsPOS() {
         if (brand) brand.textContent = name;
         const brandLogo = document.getElementById('brandLogo');
         if (brandLogo) {
-            if (appSettings?.logoBase64) {
+            if (appSettings?.logoBase64 && appSettings.logoBase64.trim()) {
                 brandLogo.src = appSettings.logoBase64;
                 brandLogo.style.display = 'inline-block';
             } else {
                 brandLogo.style.display = 'none';
-                brandLogo.src = '';
             }
         }
-        // Apply theme color
-        const theme = appSettings?.themeColor || '#198754';
-        let styleEl = document.getElementById('themeStylePos');
-        const css = `
-          .navbar { background-color: ${theme} !important; }
-          .btn-primary { background-color: ${theme} !important; border-color: ${theme} !important; }
-          .form-check-input:checked { background-color: ${theme}; border-color: ${theme}; }
-          .badge.bg-secondary { background-color: ${theme} !important; }
-        `;
-        if (!styleEl) { styleEl = document.createElement('style'); styleEl.id = 'themeStylePos'; document.head.appendChild(styleEl); }
-        styleEl.textContent = css;
-        // Refresh favicon: use base64 if available, otherwise use default favicon
-        const link = document.querySelector('link[rel="icon"]');
-        if (link) {
-            const v = Date.now();
-            if (appSettings?.faviconBase64) {
-                // Use base64 favicon from settings
-                link.setAttribute('href', appSettings.faviconBase64);
-            } else {
-                // Use default favicon with cache busting
-                link.setAttribute('href', `/favicon.ico?v=${v}`);
-            }
-        }
+        
+        // Load payment methods dynamically
+        loadPaymentMethods();
+        
+        console.log("POS settings loaded successfully");
     } catch (e) {
-        // ignore
+        console.error("Failed to load POS settings:", e);
     }
 }
+
+async function loadPaymentMethods() {
+    const container = document.getElementById('paymentMethodsContainer');
+    if (!container) return;
+    
+    // First, fetch QRIS data to check which payment methods have images
+    let qrisData = null;
+    try {
+        const res = await fetch('/api/qris', { cache: 'no-store' });
+        qrisData = await res.json();
+        console.log("QRIS data for payment methods:", qrisData);
+    } catch (error) {
+        console.error("Failed to fetch QRIS data for payment methods:", error);
+    }
+    
+    // Start with Cash option (always available)
+    let paymentMethodsHTML = `
+        <div class="form-check">
+            <input
+                class="form-check-input"
+                type="radio"
+                name="paymentMethod"
+                id="payCash"
+                value="cash"
+                checked
+            /><label class="form-check-label" for="payCash">Cash</label>
+        </div>
+    `;
+    
+    // Helper function to check if a string is valid base64 image data
+    function isValidBase64Image(str) {
+        if (!str || typeof str !== 'string' || !str.trim()) return false;
+        const trimmed = str.trim();
+        // Check if it starts with data:image/ and contains base64 data
+        return trimmed.startsWith('data:image/') && trimmed.includes('base64,') && trimmed.length > 50;
+    }
+    
+    // Check QRIS payment method - look for any QRIS-related image
+    console.log("Checking QRIS image availability:");
+    console.log("qrisData.imageBase64:", qrisData?.imageBase64 ? "EXISTS" : "EMPTY");
+    console.log("qrisData.paymentLogoQrisBase64:", qrisData?.paymentLogoQrisBase64 ? "EXISTS" : "EMPTY");
+    console.log("appSettings.paymentLogoQrisBase64:", appSettings?.paymentLogoQrisBase64 ? "EXISTS" : "EMPTY");
+    
+    const hasQrisImage = (qrisData && (
+        (isValidBase64Image(qrisData.imageBase64)) ||
+        (isValidBase64Image(qrisData.paymentLogoQrisBase64))
+    )) || (appSettings && isValidBase64Image(appSettings.paymentLogoQrisBase64));
+    
+    console.log("hasQrisImage:", hasQrisImage);
+    
+    if (hasQrisImage) {
+        paymentMethodsHTML += `
+            <div class="form-check">
+                <input
+                    class="form-check-input"
+                    type="radio"
+                    name="paymentMethod"
+                    id="payQris"
+                    value="qris"
+                /><label class="form-check-label" for="payQris">QRIS</label>
+            </div>
+        `;
+        console.log("Showing QRIS payment method - image found");
+    }
+    
+    // Check DANA payment method
+    console.log("Checking DANA image availability:");
+    console.log("qrisData.paymentLogoDanaBase64:", qrisData?.paymentLogoDanaBase64 ? "EXISTS" : "EMPTY");
+    console.log("appSettings.paymentLogoDanaBase64:", appSettings?.paymentLogoDanaBase64 ? "EXISTS" : "EMPTY");
+    
+    const hasDanaImage = (qrisData && isValidBase64Image(qrisData.paymentLogoDanaBase64)) || 
+                        (appSettings && isValidBase64Image(appSettings.paymentLogoDanaBase64));
+    
+    console.log("hasDanaImage:", hasDanaImage);
+    
+    if (hasDanaImage) {
+        paymentMethodsHTML += `
+            <div class="form-check">
+                <input
+                    class="form-check-input"
+                    type="radio"
+                    name="paymentMethod"
+                    id="payDana"
+                    value="dana"
+                /><label class="form-check-label" for="payDana">DANA</label>
+            </div>
+        `;
+        console.log("Showing DANA payment method - image found");
+    }
+    
+    // Check OVO payment method
+    console.log("Checking OVO image availability:");
+    console.log("qrisData.paymentLogoOvoBase64:", qrisData?.paymentLogoOvoBase64 ? "EXISTS" : "EMPTY");
+    console.log("appSettings.paymentLogoOvoBase64:", appSettings?.paymentLogoOvoBase64 ? "EXISTS" : "EMPTY");
+    
+    const hasOvoImage = (qrisData && isValidBase64Image(qrisData.paymentLogoOvoBase64)) || 
+                       (appSettings && isValidBase64Image(appSettings.paymentLogoOvoBase64));
+    
+    console.log("hasOvoImage:", hasOvoImage);
+    
+    if (hasOvoImage) {
+        paymentMethodsHTML += `
+            <div class="form-check">
+                <input
+                    class="form-check-input"
+                    type="radio"
+                    name="paymentMethod"
+                    id="payOvo"
+                    value="ovo"
+                /><label class="form-check-label" for="payOvo">OVO</label>
+            </div>
+        `;
+        console.log("Showing OVO payment method - image found");
+    }
+    
+    // Update container with payment methods that have images
+    container.innerHTML = paymentMethodsHTML;
+    
+    // Re-add event listeners to the new payment method radios
+    const paymentMethodRadios = container.querySelectorAll('input[name="paymentMethod"]');
+    paymentMethodRadios.forEach(radio => {
+        radio.addEventListener('change', function() {
+            const paymentMethod = this.value;
+            if (paymentMethod === 'cash') {
+                if (cashPaymentSection) cashPaymentSection.style.display = 'block';
+                if (qrisPaymentSection) qrisPaymentSection.style.display = 'none';
+            } else {
+                if (cashPaymentSection) cashPaymentSection.style.display = 'none';
+                if (qrisPaymentSection) qrisPaymentSection.style.display = 'block';
+                // Load specific image for the selected payment method
+                loadQrisImage(paymentMethod);
+            }
+        });
+    });
+    
+    console.log("Payment methods loaded - showing only options with images");
+}
+
 
 async function fetchUserInfo() { 
     if (userNameSpan) {
@@ -1647,21 +1935,104 @@ async function loadBanner() {
     }
 }
 
-async function loadQrisImage() {
+// Global flag to prevent multiple QRIS loading calls
+let qrisLoadingInProgress = false;
+
+async function loadQrisImage(paymentMethod = 'qris') {
+    // Prevent multiple simultaneous calls
+    if (qrisLoadingInProgress) {
+        console.log("QRIS loading already in progress, skipping...");
+        return;
+    }
+    
+    qrisLoadingInProgress = true;
+    
     try {
-        const res = await fetch('/api/qris', { cache: 'no-store' }); 
-        const qris = await res.json();
-        if (qris && qris.imageBase64) { 
-            qrisImageSrc = qris.imageBase64; 
-        } else { 
-            qrisImageSrc = PLACEHOLDER_IMAGE; 
+        console.log(`Loading ${paymentMethod.toUpperCase()} image...`);
+        
+        // First try to get QR code from QRIS API
+        try {
+            const res = await fetch('/api/qris', { cache: 'no-store' }); 
+            console.log("QRIS API response:", res);
+            const qris = await res.json();
+            console.log("QRIS data received:", qris);
+            
+            let imageFound = false;
+            
+            // Load specific image based on payment method
+            if (paymentMethod === 'qris') {
+                if (qris && qris.imageBase64 && qris.imageBase64.trim()) { 
+                    console.log("Using QRIS image from QRIS API:", qris.imageBase64.substring(0, 50) + "...");
+                    qrisImageSrc = qris.imageBase64;
+                    imageFound = true;
+                } else if (qris && qris.paymentLogoQrisBase64 && qris.paymentLogoQrisBase64.trim()) {
+                    console.log("Using QRIS payment logo from QRIS API:", qris.paymentLogoQrisBase64.substring(0, 50) + "...");
+                    qrisImageSrc = qris.paymentLogoQrisBase64;
+                    imageFound = true;
+                }
+            } else if (paymentMethod === 'dana') {
+                if (qris && qris.paymentLogoDanaBase64 && qris.paymentLogoDanaBase64.trim()) {
+                    console.log("Using DANA logo from QRIS API:", qris.paymentLogoDanaBase64.substring(0, 50) + "...");
+                    qrisImageSrc = qris.paymentLogoDanaBase64;
+                    imageFound = true;
+                }
+            } else if (paymentMethod === 'ovo') {
+                if (qris && qris.paymentLogoOvoBase64 && qris.paymentLogoOvoBase64.trim()) {
+                    console.log("Using OVO logo from QRIS API:", qris.paymentLogoOvoBase64.substring(0, 50) + "...");
+                    qrisImageSrc = qris.paymentLogoOvoBase64;
+                    imageFound = true;
+                }
+            }
+            
+            if (imageFound) {
+                // Image found, proceed to display
+            } else {
+                console.log(`No ${paymentMethod.toUpperCase()} image in QRIS API, trying settings...`);
+                throw new Error(`No ${paymentMethod} image in API response`);
+            }
+        } catch (qrisError) {
+            console.log("QRIS API failed, trying settings API:", qrisError);
+            
+            // Fallback to settings API
+            let imageFound = false;
+            
+            if (paymentMethod === 'qris') {
+                if (appSettings && appSettings.paymentLogoQrisBase64 && appSettings.paymentLogoQrisBase64.trim()) {
+                    console.log("Using QRIS image from settings:", appSettings.paymentLogoQrisBase64.substring(0, 50) + "...");
+                    qrisImageSrc = appSettings.paymentLogoQrisBase64;
+                    imageFound = true;
+                }
+            } else if (paymentMethod === 'dana') {
+                if (appSettings && appSettings.paymentLogoDanaBase64 && appSettings.paymentLogoDanaBase64.trim()) {
+                    console.log("Using DANA logo from settings:", appSettings.paymentLogoDanaBase64.substring(0, 50) + "...");
+                    qrisImageSrc = appSettings.paymentLogoDanaBase64;
+                    imageFound = true;
+                }
+            } else if (paymentMethod === 'ovo') {
+                if (appSettings && appSettings.paymentLogoOvoBase64 && appSettings.paymentLogoOvoBase64.trim()) {
+                    console.log("Using OVO logo from settings:", appSettings.paymentLogoOvoBase64.substring(0, 50) + "...");
+                    qrisImageSrc = appSettings.paymentLogoOvoBase64;
+                    imageFound = true;
+                }
+            }
+            
+            if (!imageFound) {
+                console.log(`No ${paymentMethod.toUpperCase()} image in settings, using placeholder`);
+                qrisImageSrc = PLACEHOLDER_IMAGE; 
+            }
         }
+        
         const qrisCheckoutImage = document.getElementById('qrisCheckoutImage');
         if (qrisCheckoutImage) {
+            console.log(`Setting ${paymentMethod.toUpperCase()} checkout image src`);
             qrisCheckoutImage.src = qrisImageSrc;
+        } else {
+            console.log("QRIS checkout image element not found");
         }
     } catch (error) { 
-        console.error("Failed to load QRIS image:", error); 
+        console.error(`Failed to load ${paymentMethod.toUpperCase()} image:`, error); 
+    } finally {
+        qrisLoadingInProgress = false;
     }
 }
 
@@ -1721,15 +2092,264 @@ function updateCustomerInfo() {
     } else {
         const customer = customers.find(c => c.id.toString() === selectedCustomer.id.toString());
         if (customer) {
-            customerInfo.innerHTML = (
-                '<strong>' + customer.name + '</strong><br>' +
-                (customer.phone ? '<span class="text-muted">📱 ' + customer.phone + '</span><br>' : '') +
-                (customer.email ? '<span class="text-muted">✉️ ' + customer.email + '</span><br>' : '') +
-                (customer.address ? '<span class="text-muted">📍 ' + customer.address + '</span>' : '')
-            ).trim();
+            customerInfo.innerHTML = `
+                <strong>${customer.name}</strong><br>
+                <span class="text-muted">${customer.phone || 'Tidak ada telepon'}</span>
+            `;
         }
     }
 }
+
+// Function to show customer debt details in POS
+function showPosCustomerDebtDetails(debtId) {
+    const debt = posCustomerDebts.find((d) => d.id === debtId);
+    if (!debt) {
+        console.error("Kesalahan: Debt not found!");
+        alert('Data hutang tidak ditemukan.');
+        return;
+    }
+
+    const customerDebtDetailsContent = document.getElementById("customerDebtDetailsContent");
+    if (customerDebtDetailsContent) {
+        const itemsHtml = debt.items ? debt.items.map(item => 
+            `<div class="d-flex justify-content-between">
+                <span>${item.name} ${item.quantity || item.qty || 1}x</span>
+                <span>${formatCurrency(item.price * (item.quantity || item.qty || 1))}</span>
+            </div>`
+        ).join('') : '';
+
+        customerDebtDetailsContent.innerHTML = `
+            <p><strong>ID Transaksi</strong> ${debt.id}</p>
+            <p><strong>Tanggal</strong> ${new Date(debt.timestamp).toLocaleString('id-ID')}</p>
+            <p><strong>Pelanggan</strong> ${debt.customerName}</p>
+            <p><strong>Metode Pembayaran</strong> ${debt.paymentMethod || 'Tunai'}</p>
+            <p><strong>Total Harga</strong> ${formatCurrency(debt.totalAmount)}</p>
+            <p><strong>Jumlah Dibayar</strong> ${formatCurrency(debt.paidAmount)}</p>
+            <p><strong>Sisa Hutang</strong> ${formatCurrency(debt.remainingAmount)}</p>
+            <p><strong>Status</strong> <span class="badge ${debt.status === 'Lunas' ? 'bg-success' : (debt.status.includes('Sebagian') ? 'bg-warning text-dark' : 'bg-danger')}">${debt.status}</span></p>
+            ${itemsHtml ? `<p><strong>Detail Barang:</strong></p>${itemsHtml}` : ""}
+            ${debt.note ? `<p><strong>Catatan</strong> ${debt.note}</p>` : ""}
+        `;
+    }
+
+    // Setup pay button
+    const payBtn = document.getElementById("posPayDebtFromDetailsBtn");
+    if (payBtn) {
+        payBtn.onclick = () => {
+            const detailsModal = bootstrap.Modal.getInstance(document.getElementById("customerDebtDetailsModal"));
+            if (detailsModal) {
+                detailsModal.hide();
+            }
+            setTimeout(() => openPosCustomerPayment(debtId), 300);
+        };
+    }
+
+    // Setup print receipt button
+    const printBtn = document.getElementById("posPrintDebtReceiptBtn");
+    if (printBtn) {
+        console.log('Setting up print debt receipt button handler');
+        printBtn.onclick = async () => {
+            console.log('Print debt receipt button clicked');
+            console.log('Debt object:', debt);
+            console.log('Debt remainingAmount:', debt.remainingAmount);
+            console.log('Debt totalAmount:', debt.totalAmount);
+            console.log('Debt paidAmount:', debt.paidAmount);
+            
+            // Fetch latest transaction data from server to ensure we have updated payment info
+            try {
+                const response = await fetch(`/api/transactions/${debt.id}`);
+                if (response.ok) {
+                    const latestTransaction = await response.json();
+                    console.log('Latest transaction data:', latestTransaction);
+                    
+                    // Use the latest data for printing
+                    const transaction = {
+                        id: latestTransaction.id,
+                        timestamp: latestTransaction.timestamp,
+                        paymentMethod: latestTransaction.paymentMethod || 'cash',
+                        amountReceived: latestTransaction.paidAmount || latestTransaction.amountReceived || 0,
+                        change: latestTransaction.change || 0,
+                        customerId: latestTransaction.customerId || 'default',
+                        customerName: latestTransaction.customerName,
+                        items: latestTransaction.items || [],
+                        subtotal: latestTransaction.totalAmount || 0,
+                        discountAmount: latestTransaction.discountAmount || 0,
+                        taxAmount: latestTransaction.taxAmount || 0,
+                        serviceAmount: latestTransaction.serviceAmount || 0,
+                        totalAmount: latestTransaction.totalAmount || 0,
+                        isDebt: true,
+                        remainingAmount: latestTransaction.remainingAmount || Math.max(0, (latestTransaction.totalAmount || 0) - (latestTransaction.paidAmount || latestTransaction.amountReceived || 0)),
+                        status: latestTransaction.status || (latestTransaction.remainingAmount === 0 ? 'Lunas' : 'Belum Lunas')
+                    };
+                    console.log('Transaction object for print (updated):', transaction);
+                    console.log('Calculated remainingAmount:', transaction.remainingAmount);
+                    printReceipt(transaction);
+                } else {
+                    console.warn('Failed to fetch latest transaction data, using cached data');
+                    // Fallback to cached debt data
+                    const transaction = {
+                        id: debt.id,
+                        timestamp: debt.timestamp,
+                        paymentMethod: debt.paymentMethod || 'cash',
+                        amountReceived: debt.paidAmount || 0,
+                        change: 0,
+                        customerId: debt.customerId || 'default',
+                        customerName: debt.customerName,
+                        items: debt.items || [],
+                        subtotal: debt.totalAmount || 0,
+                        discountAmount: 0,
+                        taxAmount: 0,
+                        serviceAmount: 0,
+                        totalAmount: debt.totalAmount || 0,
+                        isDebt: true,
+                        remainingAmount: debt.remainingAmount || Math.max(0, (debt.totalAmount || 0) - (debt.paidAmount || 0)),
+                        status: debt.status
+                    };
+                    printReceipt(transaction);
+                }
+            } catch (error) {
+                console.error('Error fetching latest transaction data:', error);
+                // Fallback to cached debt data
+                const transaction = {
+                    id: debt.id,
+                    timestamp: debt.timestamp,
+                    paymentMethod: debt.paymentMethod || 'cash',
+                    amountReceived: debt.paidAmount || 0,
+                    change: 0,
+                    customerId: debt.customerId || 'default',
+                    customerName: debt.customerName,
+                    items: debt.items || [],
+                    subtotal: debt.totalAmount || 0,
+                    discountAmount: 0,
+                    taxAmount: 0,
+                    serviceAmount: 0,
+                    totalAmount: debt.totalAmount || 0,
+                    isDebt: true,
+                    remainingAmount: debt.remainingAmount || Math.max(0, (debt.totalAmount || 0) - (debt.paidAmount || 0)),
+                    status: debt.status
+                };
+                printReceipt(transaction);
+            }
+        };
+    } else {
+        console.log('Print debt receipt button not found');
+    }
+
+    // Show customer debt details modal
+    const modalEl = document.getElementById("customerDebtDetailsModal");
+    if (modalEl) {
+        const modal = new bootstrap.Modal(modalEl);
+        modal.show();
+    }
+}
+
+// Open customer debt payment modal
+async function openPosCustomerPayment(debtId) {
+    const debt = posCustomerDebts.find((d) => d.id === debtId);
+    if (!debt) {
+        alert('Data hutang tidak ditemukan.');
+        return;
+    }
+
+    const paymentContent = document.getElementById('customerDebtPaymentContent');
+    if (paymentContent) {
+        paymentContent.innerHTML = `
+            <div class="mb-3">
+                <label class="form-label"><strong>ID Transaksi:</strong></label>
+                <input type="text" class="form-control" value="${debt.id}" readonly>
+            </div>
+            <div class="mb-3">
+                <label class="form-label"><strong>Pelanggan:</strong></label>
+                <input type="text" class="form-control" value="${debt.customerName}" readonly>
+            </div>
+            <div class="mb-3">
+                <label class="form-label"><strong>Total Hutang:</strong></label>
+                <p class="text-danger">${formatCurrency(debt.totalAmount)}</p>
+            </div>
+            <div class="mb-3">
+                <label class="form-label"><strong>Sudah Dibayar:</strong></label>
+                <p>${formatCurrency(debt.paidAmount)}</p>
+            </div>
+            <div class="mb-3">
+                <label class="form-label"><strong>Sisa Hutang:</strong></label>
+                <p class="text-danger fs-5">${formatCurrency(debt.remainingAmount)}</p>
+            </div>
+            <div class="mb-3">
+                <label class="form-label"><strong>Jumlah Pembayaran:</strong></label>
+                <input type="number" class="form-control" id="posCustomerPaymentAmount" value="${debt.remainingAmount}" min="1" max="${debt.remainingAmount}">
+                <small class="text-muted">Maksimal: ${formatCurrency(debt.remainingAmount)}</small>
+            </div>
+        `;
+    }
+
+    // Setup save button
+    const saveBtn = document.getElementById('savePosCustomerPaymentBtn');
+    if (saveBtn) {
+        saveBtn.onclick = () => savePosCustomerPayment(debtId);
+    }
+
+    // Show modal
+    const modalEl = document.getElementById('customerDebtPaymentModal');
+    if (modalEl) {
+        const modal = new bootstrap.Modal(modalEl);
+        modal.show();
+    }
+}
+
+// Save customer debt payment
+async function savePosCustomerPayment(debtId) {
+    const debt = posCustomerDebts.find((d) => d.id === debtId);
+    if (!debt) {
+        alert('Data hutang tidak ditemukan');
+        return;
+    }
+
+    const paymentAmount = parseInt(document.getElementById('posCustomerPaymentAmount').value) || 0;
+    if (paymentAmount <= 0) {
+        alert('Jumlah pembayaran harus lebih dari 0.');
+        return;
+    }
+
+    if (paymentAmount > debt.remainingAmount) {
+        alert('Jumlah pembayaran melebihi sisa hutang.');
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/transactions/${debtId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                paidAmount: Number(debt.paidAmount) + paymentAmount,
+                remainingAmount: Number(debt.remainingAmount) - paymentAmount,
+                amountReceived: Number(debt.paidAmount) + paymentAmount, // Update amountReceived to match paidAmount
+                change: 0, // Always set change to 0 when debt payment is made
+                paymentDate: new Date().toISOString().split('T')[0]
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error('Gagal memperbarui pembayaran hutang');
+        }
+
+        // Close modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('customerDebtPaymentModal'));
+        if (modal) modal.hide();
+
+        alert('Pembayaran hutang berhasil diproses');
+        
+        // Refresh transactions and debt list
+        await loadRecentTransactions();
+        
+    } catch (error) {
+        console.error('Error saving customer payment:', error);
+        alert('Terjadi kesalahan saat memproses pembayaran hutang.');
+    }
+}
+
+// Make functions globally accessible
+window.showPosCustomerDebtDetails = showPosCustomerDebtDetails;
+window.openPosCustomerPayment = openPosCustomerPayment;
 
 // Gunakan productMap yang sudah dideklarasikan sebelumnya
 // var productMap = new Map();
@@ -1912,9 +2532,9 @@ function renderProducts() {
             return; 
         }
         
-        // OPTIMASI: Batasi jumlah produk yang dirender sekaligus untuk menghindari jank
-        const maxProductsPerRender = 50;
-        const productsToRender = filteredProducts.slice(0, maxProductsPerRender);
+        // OPTIMASI: Tampilkan semua produk tanpa batasan
+        // Sebelumnya dibatasi untuk menghindari jank, tapi sekarang tampilkan semua
+        const productsToRender = filteredProducts;
         
         productList.innerHTML = productsToRender.map(product => {
         const productId = product.id || 0;
@@ -1955,6 +2575,88 @@ function renderProducts() {
         return '<div class="col-md-6 col-lg-4"><div class="card product-card h-100 position-relative" onclick="addToCart(' + productId + ')">' + badges + '<img src="' + productImage + '" class="card-img-top" alt="' + productName + '" data-bs-toggle="tooltip" data-bs-html="true" data-bs-title="' + tooltipContent.replace(/"/g, '&quot;') + '"><div class="card-body"><h5 class="card-title">' + productName + '</h5>' + priceHtml + '<span class="badge bg-secondary">Stock: ' + productStock + '</span></div></div></div>';
     }).join('');
 
+    // PERBAIKAN: Apply animated gradient border to product cards only if enabled in settings
+    setTimeout(() => {
+        // Check if product borders are enabled in admin settings
+        const showBorders = appSettings?.posShowProductBorders !== false;
+        
+        if (showBorders) {
+            const productCards = document.querySelectorAll('.product-card');
+            productCards.forEach(card => {
+                // Remove any existing border wrapper
+                const existingWrapper = card.previousElementSibling;
+                if (existingWrapper && existingWrapper.classList.contains('product-animated-border')) {
+                    existingWrapper.remove();
+                }
+                
+                // Create a wrapper div that will contain the animated border
+                const wrapper = document.createElement('div');
+                wrapper.style.cssText = `
+                    position: relative;
+                    display: inline-block;
+                    width: 100%;
+                    height: 100%;
+                `;
+                
+                // Create animated border element
+                const borderElement = document.createElement('div');
+                borderElement.className = 'product-animated-border';
+                borderElement.style.cssText = `
+                    position: absolute;
+                    top: -2px;
+                    left: -2px;
+                    right: -2px;
+                    bottom: -2px;
+                    background-image: repeating-linear-gradient(60deg, #00e1ff, #00e1ff 17px, transparent 17px, transparent 19px, #00e1ff 19px), repeating-linear-gradient(150deg, #00e1ff, #00e1ff 17px, transparent 17px, transparent 19px, #00e1ff 19px), repeating-linear-gradient(240deg, #00e1ff, #00e1ff 17px, transparent 17px, transparent 19px, #00e1ff 19px), repeating-linear-gradient(330deg, #00e1ff, #00e1ff 17px, transparent 17px, transparent 19px, #00e1ff 19px);
+                    background-size: 2px calc(100% + 38px), calc(100% + 38px) 2px, 2px calc(100% + 38px), calc(100% + 38px) 2px;
+                    background-position: 0 0, 0 0, 100% 0, 0 100%;
+                    background-repeat: no-repeat;
+                    animation: borderAnimation 1s infinite linear;
+                    pointer-events: none;
+                    z-index: 1;
+                `;
+                
+                // Add animation keyframes if not already added
+                if (!document.querySelector('#product-border-animation')) {
+                    const style = document.createElement('style');
+                    style.id = 'product-border-animation';
+                    style.textContent = `
+                        @keyframes borderAnimation {
+                            from { background-position: 0 0, -38px 0, 100% -38px, 0 100%; }
+                            to { background-position: 0 -38px, 0 0, 100% 0, -38px 100%; }
+                        }
+                    `;
+                    document.head.appendChild(style);
+                }
+                
+                // Wrap the card with the border
+                const parent = card.parentNode;
+                wrapper.appendChild(borderElement);
+                wrapper.appendChild(card);
+                parent.insertBefore(wrapper, parent.firstChild);
+                
+                // Style the card to work with the wrapper
+                card.style.position = 'relative';
+                card.style.zIndex = '2';
+                card.style.background = 'white';
+                card.style.border = 'none';
+            });
+        } else {
+            // Remove any existing border wrappers if borders are disabled
+            const existingWrappers = document.querySelectorAll('.product-animated-border');
+            existingWrappers.forEach(wrapper => wrapper.remove());
+            
+            // Reset card styles
+            const productCards = document.querySelectorAll('.product-card');
+            productCards.forEach(card => {
+                card.style.position = '';
+                card.style.zIndex = '';
+                card.style.background = '';
+                card.style.border = '';
+            });
+        }
+    }, 100);
+
     // PERBAIKAN: Initialize tooltips and track them
     try {
         const newTooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
@@ -1976,6 +2678,82 @@ function renderProducts() {
     
     isRendering = false;
 });
+}
+
+function addToCartWithVariant(productId, variantIndex) {
+    console.log('addToCartWithVariant called with productId:', productId, 'variantIndex:', variantIndex);
+    
+    const product = products.find(p => p.id === productId);
+    if (!product) {
+        console.warn('Product not found:', productId);
+        return;
+    }
+    console.log('Product found:', product.name);
+
+    const variants = Array.isArray(product.unitPrices) ? product.unitPrices : [];
+    const variant = variants[variantIndex];
+    if (!variant) {
+        console.warn('Variant not found:', variantIndex, 'available variants:', variants.length);
+        return;
+    }
+    console.log('Variant found:', variant);
+
+    // Validate stock
+    const currentStock = Number(product.stock || 0);
+    console.log('Current stock:', currentStock, 'allowNegativeStock:', appSettings?.allowNegativeStock);
+    
+    if (currentStock <= 0 && appSettings?.allowNegativeStock === false) {
+        console.log('Stock validation failed - returning early');
+        playSound('error');
+        return;
+    }
+
+    // Check if this variant already exists in cart
+    const existingItem = cart.find(item => 
+        item.productId === productId && 
+        item.variant && 
+        item.variant.index === variantIndex
+    );
+    console.log('Existing item found:', !!existingItem);
+
+    if (existingItem) {
+        // Increment quantity of existing variant item
+        existingItem.quantity += 1;
+        existingItem.subtotal = existingItem.price * existingItem.quantity;
+        renderCart();
+        playSound('beep');
+        return;
+    }
+
+    // Calculate variant price
+    const variantPrice = Number(variant.price || 0);
+    const variantQty = Number(variant.qty || 1);
+    console.log('Creating new cart item with price:', variantPrice, 'qty:', variantQty);
+    
+    // Add to cart with variant info
+    const cartItem = {
+        id: Date.now() + Math.random(),
+        productId: product.id,
+        name: product.name,
+        price: variantPrice,
+        quantity: 1,
+        subtotal: variantPrice,
+        variant: {
+            index: variantIndex,
+            qty: variantQty,
+            unit: variant.unit || '',
+            sku: variant.sku || '',
+            price: variantPrice,
+            note: variant.note || ''
+        },
+        image: product.imageBase64 || ''
+    };
+    console.log('Cart item created:', cartItem);
+
+    cart.push(cartItem);
+    console.log('Cart length after push:', cart.length);
+    renderCart();
+    playSound('beep');
 }
 
 function addToCart(productId) {
@@ -2048,8 +2826,37 @@ function openVariantSelection(product){
         const qty = Number(v.qty || 0);
         const unit = String(v.unit || '').trim();
         const price = Number(v.price || 0);
+        const sku = String(v.sku || '').trim();
+        const photo = String(v.photo || '').trim();
+        const note = String(v.note || v.desc || v.keterangan || '').trim();
         const id = 'variant_' + product.id + '_' + idx;
-        return '<div class="form-check mb-1"><input class="form-check-input" type="radio" name="variantOption" id="' + id + '" value="' + idx + '" ' + (idx===0?'checked':'') + '><label class="form-check-label" for="' + id + '"><strong>' + qty + ' ' + unit + '</strong> — ' + formatCurrency(price) + '</label></div>';
+        
+        let photoHtml = '';
+        if (photo) {
+            photoHtml = `<img src="${photo}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;border:1px solid #ddd;">`;
+        }
+        
+        let skuHtml = '';
+        if (sku) {
+            skuHtml = `<div class="text-muted small">SKU: ${sku}</div>`;
+        }
+        
+        let noteHtml = '';
+        if (note) {
+            noteHtml = `<div class="text-muted small">${note}</div>`;
+        }
+        
+        return `<div class="form-check mb-2 p-2 border rounded">
+            <input class="form-check-input" type="radio" name="variantOption" id="${id}" value="${idx}" ${idx===0?'checked':''}>
+            <label class="form-check-label d-flex align-items-center gap-3" for="${id}">
+                ${photoHtml ? `<div>${photoHtml}</div>` : ''}
+                <div class="flex-grow-1">
+                    <div><strong>${qty} ${unit}</strong> — ${formatCurrency(price)}</div>
+                    ${skuHtml}
+                    ${noteHtml}
+                </div>
+            </label>
+        </div>`;
     }).join('');
     variantOptionsBox.innerHTML = opts || '<p class="text-muted">Tidak ada varian tersedia.</p>';
     // bind change
@@ -2074,20 +2881,49 @@ function applySelectedVariant(){
     const variantQty = Number(chosen.qty||1);
     const variantUnit = String(chosen.unit||'');
     const variantPrice = Number(chosen.price||0);
+    const variantSku = String(chosen.sku||'').trim();
+    const variantNote = String(chosen.note||'').trim();
 
-    // Tambahkan sebagai paket: qty item = 1 paket, price = harga paket
-    cart.push({
-        productId: product.id,
-        name: product.name || 'Unknown Product',
-        price: variantPrice,
-        qty: 1,
-        variantQty,
-        variantUnit
-    });
+    // Check if this variant already exists in cart
+    const existingItem = cart.find(item => 
+        item.productId === product.id && 
+        item.variant && 
+        item.variant.index === idx
+    );
+
+    if (existingItem) {
+        // Increment quantity of existing variant item
+        existingItem.quantity += 1;
+        existingItem.subtotal = existingItem.price * existingItem.quantity;
+    } else {
+        // Add new item to cart
+        cart.push({
+            id: Date.now() + Math.random(),
+            productId: product.id,
+            name: product.name,
+            price: variantPrice,
+            quantity: 1,
+            subtotal: variantPrice,
+            variant: {
+                index: idx,
+                qty: variantQty,
+                unit: variantUnit,
+                // sku: variantSku,
+                price: variantPrice,
+                note: variantNote
+            },
+            image: product.imageBase64 || ''
+        });
+    }
+    
     if (variantSelectModal) variantSelectModal.hide();
     pendingVariantProduct = null;
     selectedVariantIdx = -1;
     renderCart();
+    
+    // Play success sound for variant addition
+    console.log('Playing beep sound for variant addition');
+    playSound('beep');
 }
 
 // Variabel untuk throttling render cart
@@ -2147,15 +2983,51 @@ function renderCart() {
     for (let i = 0; i < cart.length; i++) {
         const item = cart[i];
         const itemName = item.name || 'Item Tidak Dikenal';
-        const itemPrice = item.price || 0;
-        const itemQty = item.qty || 0;
-        
+        const itemPrice = Number(item.price || 0);
+        // Gunakan field quantity (bukan qty) untuk keranjang baru
+        const itemQty = Number(item.quantity != null ? item.quantity : (item.qty != null ? item.qty : 0));
+
         // OPTIMASI: Gunakan Map untuk lookup produk daripada find
         const product = productMap.get(item.productId) || {};
-        const productStock = product.stock || 0;
-        const variantMeta = (item.variantQty && item.variantUnit) ? '<br><small class="text-muted">Varian: ' + item.variantQty + ' ' + item.variantUnit + '</small>' : '';
-        
-        cartHtml += '<div class="d-flex justify-content-between align-items-center mb-2"><div><strong>' + itemName + '</strong>' + variantMeta + '<br><small>' + formatCurrency(itemPrice) + ' x ' + itemQty + '</small>' + (productStock < itemQty ? '<br><small class="text-danger">⚠ Stok terbatas</small>' : '') + '</div><div class="d-flex align-items-center gap-1"><button class="btn btn-sm btn-outline-secondary qty-btn" data-action="decrease" data-index="' + i + '">-</button><input type="number" class="form-control form-control-sm text-center qty-input" style="width: 60px; flex-shrink: 0;" min="1" value="' + itemQty + '" data-index="' + i + '"><button class="btn btn-sm btn-outline-secondary qty-btn" data-action="increase" data-index="' + i + '">+</button><button class="btn btn-sm btn-danger ms-2 remove-btn" data-index="' + i + '">&times;</button></div></div>';
+        const productStock = Number(product.stock || 0);
+
+        // Detail varian (untuk item yang punya field variant)
+        let variantMeta = '';
+        if (item.variant) {
+            const v = item.variant;
+            const vQty = Number(v.qty || v.variantQty || 0);
+            const vUnit = (v.unit || v.variantUnit || '').toString().trim();
+            const vSku = (v.sku || '').toString().trim();
+            const vNote = (v.note || '').toString().trim();
+
+            const parts = [];
+            // Prioritize showing note (variant name) first, as it's more descriptive
+            if (vNote) parts.push(vNote);
+            if (vQty && vUnit) parts.push('' + vQty + ' ' + vUnit);
+            if (vSku) parts.push('SKU: ' + vSku);
+
+            if (parts.length) {
+                variantMeta = '<br><small class="text-muted">Varian: ' + parts.join(' • ') + '</small>';
+            }
+        } else if (item.variantQty && item.variantUnit) {
+            // Backward compatibility untuk struktur lama
+            variantMeta = '<br><small class="text-muted">Varian: ' + item.variantQty + ' ' + item.variantUnit + '</small>';
+        }
+
+        cartHtml += '<div class="d-flex justify-content-between align-items-center mb-2">'
+            + '<div>'
+            + '<strong>' + itemName + '</strong>'
+            + variantMeta
+            + '<br><small>' + formatCurrency(itemPrice) + ' x ' + itemQty + '</small>'
+            + (productStock < itemQty ? '<br><small class="text-danger">⚠ Stok terbatas</small>' : '')
+            + '</div>'
+            + '<div class="d-flex align-items-center gap-1">'
+            + '<button class="btn btn-sm btn-outline-secondary qty-btn" data-action="decrease" data-index="' + i + '">-</button>'
+            + '<input type="number" class="form-control form-control-sm text-center qty-input" style="width: 60px; flex-shrink: 0;" min="1" value="' + itemQty + '" data-index="' + i + '">' 
+            + '<button class="btn btn-sm btn-outline-secondary qty-btn" data-action="increase" data-index="' + i + '">+</button>'
+            + '<button class="btn btn-sm btn-danger ms-2 remove-btn" data-index="' + i + '">&times;</button>'
+            + '</div>'
+            + '</div>';
     }
     
     tempContainer.innerHTML = cartHtml;
@@ -2232,7 +3104,8 @@ function setCartQty(index, newQty) {
         removeFromCart(index);
     } else {
         // Izinkan qty melebihi stok tanpa membatasi ke maxStock
-        cart[index].qty = qty;
+        cart[index].quantity = qty;
+        cart[index].qty = qty; // backward compatibility
         renderCart();
     }
 }
@@ -2246,7 +3119,7 @@ function updateCartQty(index, change) {
         return;
     }
     
-    const currentQty = cart[index].qty || 0;
+    const currentQty = (cart[index].quantity != null ? cart[index].quantity : cart[index].qty) || 0;
     const newQty = currentQty + change;
     const maxStock = Number(product.stock || 0);
     
@@ -2257,7 +3130,8 @@ function updateCartQty(index, change) {
     }
     
     // Izinkan qty melebihi stok tanpa membatasi ke maxStock
-    cart[index].qty = newQty;
+    cart[index].quantity = newQty;
+    cart[index].qty = newQty; // backward compatibility
     
     renderCart();
 }
@@ -2368,10 +3242,10 @@ async function loadDraftToCart(draftId) {
         try {
             await fetch(`/api/drafts/${draftId}`, { method: 'DELETE' });
         } catch (e) {}
-        // Hapus dari array lokal untuk update UI yang cepat, lalu refresh dari server
+        // Hapus dari array lokal untuk update UI yang cepat
         drafts = drafts.filter(d => d.id !== draftId);
         renderDrafts();
-        try { await loadDrafts(); } catch (e) {}
+        // Tidak perlu memanggil loadDrafts() lagi karena data sudah diupdate secara lokal
 
     } catch (error) {
         console.error("Failed to load draft:", error);
@@ -2406,6 +3280,84 @@ async function loadRecentTransactions() {
         const sorted = Array.isArray(recentTransactionsData)
             ? [...recentTransactionsData].sort((a,b)=> (b.timestamp||0) - (a.timestamp||0))
             : [];
+        
+        // Load customer debts from the same transaction data
+        const debts = [];
+        
+        sorted.forEach(t => {
+            
+            const hasExplicitDebt = t.paidAmount != null || t.remainingAmount != null;
+            const isImplicitPartialCash = !hasExplicitDebt &&
+                t.paymentMethod === 'cash' && 
+                t.amountReceived < t.totalAmount;
+
+            if (!hasExplicitDebt && !isImplicitPartialCash) {
+                return;
+            }
+
+            const totalAmount = t.totalAmount || 0;
+            const paidAmount = hasExplicitDebt ? (t.paidAmount || 0) : (t.amountReceived || 0);
+            const remainingAmount = hasExplicitDebt ? (t.remainingAmount || 0) : (totalAmount - paidAmount);
+
+            if (remainingAmount <= 0) {
+                return;
+            }
+
+            const status = hasExplicitDebt
+                ? (paidAmount > 0 ? 'Hutang (Bayar Sebagian)' : 'Belum Bayar')
+                : 'Hutang';
+
+            debts.push({
+                id: t.id,
+                customerName: t.customerName || 'Pelanggan Umum',
+                totalAmount,
+                paidAmount,
+                remainingAmount,
+                paymentMethod: t.paymentMethod || 'cash',
+                timestamp: t.timestamp || t.date,
+                status,
+                items: t.items || []
+            });
+        });
+
+        // Display customer debts
+        const posCustomerDebtsSummary = document.getElementById('posCustomerDebtsSummary');
+        if (posCustomerDebtsSummary) {
+            if (!debts.length) {
+                posCustomerDebtsSummary.innerHTML = '<p class="text-muted mb-0">Tidak ada hutang customer aktif.</p>';
+            } else {
+                posCustomerDebts = debts;
+                const rows = debts.slice(0, 10).map((d) => `
+                    <tr>
+                        <td>${d.customerName}</td>
+                        <td class="text-end">${formatCurrency(d.remainingAmount)}</td>
+                        <td class="text-center">
+                            <button class="btn btn-sm btn-outline-info" onclick="showPosCustomerDebtDetails('${d.id}')">Detail</button>
+                            <button class="btn btn-sm btn-success" onclick="openPosCustomerPayment('${d.id}')">Bayar</button>
+                        </td>
+                    </tr>
+                `).join('');
+
+                posCustomerDebtsSummary.innerHTML = `
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Pelanggan</th>
+                                    <th class="text-end">Sisa Hutang</th>
+                                    <th class="text-center">Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${rows}
+                            </tbody>
+                        </table>
+                    </div>
+                    <small class="text-muted">Menampilkan hingga 10 hutang terbaru.</small>
+                `;
+            }
+        }
+        
         // Compute best sellers by frequency
         try {
             const freq = new Map();
@@ -2420,6 +3372,8 @@ async function loadRecentTransactions() {
             bestSellerIds = new Set(ranked.map(r=>r[0]));
         } catch (e) { bestSellerIds = new Set(); }
         renderRecentTransactions(sorted);
+        
+        // Customer debts are now processed within the loadRecentTransactions function
     } catch (error) {
         console.error("Failed to load recent transactions:", error);
         recentTransactionsList.innerHTML = `<p class="text-danger">Gagal memuat transaksi.</p>`;
@@ -2494,12 +3448,229 @@ function showTransactionDetails(transactionId) {
             </table>
         </div>`;
     }
+    
+    // Set up event handler for print receipt button
+    if (printReceiptFromDetailsBtn) {
+        console.log('Setting up print receipt from details button handler');
+        printReceiptFromDetailsBtn.onclick = async () => {
+            console.log('Print receipt from details button clicked');
+            
+            // Fetch latest transaction data from server to ensure we have updated info
+            try {
+                const response = await fetch(`/api/transactions/${transactionId}`);
+                if (response.ok) {
+                    const latestTransaction = await response.json();
+                    console.log('Latest transaction data for details:', latestTransaction);
+                    
+                    // Use the latest data for printing
+                    const hasExplicitDebtFields = latestTransaction.paidAmount != null || latestTransaction.remainingAmount != null;
+                    const isMarkedAsDebt = latestTransaction.isDebt === true || latestTransaction.status != null;
+                    
+                    // Add debt detection flags only for actual debt transactions
+                    if (hasExplicitDebtFields || isMarkedAsDebt) {
+                        latestTransaction.isDebt = true;
+                        // Ensure remainingAmount is calculated correctly
+                        if (latestTransaction.remainingAmount == null) {
+                            latestTransaction.remainingAmount = Math.max(0, (latestTransaction.totalAmount || 0) - (latestTransaction.paidAmount || latestTransaction.amountReceived || 0));
+                        }
+                        // Fix change for old debt transactions that still have negative change
+                        if (latestTransaction.remainingAmount === 0 && latestTransaction.change < 0) {
+                            latestTransaction.change = 0;
+                        }
+                        console.log('Detected debt transaction, remainingAmount:', latestTransaction.remainingAmount, 'change:', latestTransaction.change);
+                    }
+                    
+                    printReceipt(latestTransaction);
+                } else {
+                    console.warn('Failed to fetch latest transaction data, using cached data');
+                    // Fallback to cached transaction data with existing logic
+                    const hasExplicitDebtFields = transaction.paidAmount != null || transaction.remainingAmount != null;
+                    const isMarkedAsDebt = transaction.isDebt === true || transaction.status != null;
+                    
+                    if (hasExplicitDebtFields || isMarkedAsDebt) {
+                        transaction.isDebt = true;
+                        if (transaction.remainingAmount == null) {
+                            transaction.remainingAmount = Math.max(0, (transaction.totalAmount || 0) - (transaction.amountReceived || 0));
+                        }
+                        if (transaction.remainingAmount === 0 && transaction.change < 0) {
+                            transaction.change = 0;
+                        }
+                        console.log('Detected debt transaction (cached), remainingAmount:', transaction.remainingAmount, 'change:', transaction.change);
+                    }
+                    
+                    printReceipt(transaction);
+                }
+            } catch (error) {
+                console.error('Error fetching latest transaction data:', error);
+                // Fallback to cached transaction data with existing logic
+                const hasExplicitDebtFields = transaction.paidAmount != null || transaction.remainingAmount != null;
+                const isMarkedAsDebt = transaction.isDebt === true || transaction.status != null;
+                
+                if (hasExplicitDebtFields || isMarkedAsDebt) {
+                    transaction.isDebt = true;
+                    if (transaction.remainingAmount == null) {
+                        transaction.remainingAmount = Math.max(0, (transaction.totalAmount || 0) - (transaction.amountReceived || 0));
+                    }
+                    if (transaction.remainingAmount === 0 && transaction.change < 0) {
+                        transaction.change = 0;
+                    }
+                    console.log('Detected debt transaction (cached fallback), remainingAmount:', transaction.remainingAmount, 'change:', transaction.change);
+                }
+                
+                printReceipt(transaction);
+            }
+        };
+    } else {
+        console.log('Print receipt from details button not found');
+    }
+    
+    // Set up event handler for void transaction button
+    if (voidTransactionBtn) {
+        voidTransactionBtn.onclick = () => voidTransaction(transactionId);
+    }
+    
     if (transactionDetailsModal) transactionDetailsModal.show();
 }
 
-function printReceipt(transaction) {
-    return new Promise((resolve, reject) => {
-    try {
+function voidTransaction(transactionId) {
+    const transaction = recentTransactions.find(t => t.id === transactionId);
+    if (!transaction) {
+        alert('Transaksi tidak ditemukan!');
+        return;
+    }
+    
+    if (!confirm(`Apakah Anda yakin ingin membatalkan transaksi ini?\n\nID: ${transaction.id}\nTotal: ${formatCurrency(transaction.totalAmount || 0)}\n\nTindakan ini tidak dapat dibatalkan dan akan mengembalikan stok produk.`)) {
+        return;
+    }
+    
+    // Call server API to void transaction
+    fetch(`/api/transactions/${transactionId}`, {
+        method: 'DELETE',
+        credentials: 'include'
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            alert('Transaksi berhasil dibatalkan!');
+            
+            // Add voided items back to cart
+            if (transaction.items && Array.isArray(transaction.items)) {
+                transaction.items.forEach(item => {
+                    // Convert old transaction item format to cart item format
+                    const cartItem = {
+                        id: Date.now() + Math.random(),
+                        productId: item.productId,
+                        name: item.name,
+                        price: item.price,
+                        quantity: item.qty,
+                        subtotal: item.subtotal || (item.price * item.qty)
+                    };
+                    
+                    // Handle variant information if present
+                    if (item.variant) {
+                        cartItem.variant = item.variant;
+                    } else if (item.variantQty && item.variantUnit) {
+                        // Backward compatibility for old format
+                        cartItem.variant = {
+                            qty: item.variantQty,
+                            unit: item.variantUnit
+                        };
+                    }
+                    
+                    // Check if item already exists in cart (for variants)
+                    let existingItem = null;
+                    if (cartItem.variant && cartItem.variant.index !== undefined) {
+                        // Find existing item with same product and variant
+                        existingItem = cart.find(existing => 
+                            existing.productId === cartItem.productId && 
+                            existing.variant && 
+                            existing.variant.index === cartItem.variant.index
+                        );
+                    } else {
+                        // Find existing item with same product (no variant)
+                        existingItem = cart.find(existing => 
+                            existing.productId === cartItem.productId && 
+                            !existing.variant
+                        );
+                    }
+                    
+                    if (existingItem) {
+                        // Increment quantity of existing item
+                        existingItem.quantity += cartItem.quantity;
+                        existingItem.subtotal = existingItem.price * existingItem.quantity;
+                    } else {
+                        // Add new item to cart
+                        cart.push(cartItem);
+                    }
+                });
+                
+                // Refresh cart display
+                renderCart();
+            }
+            
+            // Close the modal
+            if (transactionDetailsModal) {
+                transactionDetailsModal.hide();
+            }
+            
+            // Refresh recent transactions list
+            loadRecentTransactions();
+            
+            // Play success sound
+            playSound('beep');
+        } else {
+            alert('Gagal membatalkan transaksi: ' + (result.message || 'Terjadi kesalahan'));
+        }
+    })
+    .catch(error => {
+        console.error('Error voiding transaction:', error);
+        alert('Gagal membatalkan transaksi. Silakan coba lagi.');
+    });
+}
+
+async function printReceipt(transaction) {
+    console.log('Print receipt function called with transaction:', transaction);
+    console.log('Print receipt - transaction data:', JSON.stringify(transaction, null, 2));
+    console.log('Print receipt - remainingAmount:', transaction.remainingAmount);
+    console.log('Print receipt - items:', JSON.stringify(transaction.items, null, 2));
+    
+    return new Promise(async (resolve, reject) => {
+        try {
+        
+        // Fetch latest transaction data from server to ensure we have updated info
+        let latestTransaction = transaction;
+        if (transaction.id) {
+            try {
+                const response = await fetch(`/api/transactions/${transaction.id}`);
+                if (response.ok) {
+                    const serverData = await response.json();
+                    latestTransaction = serverData;
+                    console.log('Using latest transaction data from server for print');
+                } else {
+                    console.log('Using cached transaction data for print');
+                }
+            } catch (error) {
+                console.error('Error fetching latest transaction data for print:', error);
+                console.log('Using cached transaction data for print');
+            }
+        }
+        
+        // Fix change for old debt transactions that still have negative change
+        if (latestTransaction.remainingAmount === 0 && latestTransaction.change < 0) {
+            latestTransaction.change = 0;
+        }
+        
+        // Check if this is a debt transaction that's been fully paid
+        const isDebtPaid = latestTransaction.paidAmount != null && latestTransaction.remainingAmount === 0;
+        
+        // For paid debts, use paidAmount as amountReceived and change as 0
+        if (isDebtPaid) {
+            latestTransaction.amountReceived = latestTransaction.paidAmount;
+            latestTransaction.change = 0;
+        }
+        
+        console.log('Final transaction data for print:', latestTransaction);
+        
         const paperWidth = parseInt(appSettings?.paperWidth) || 80;
         let fontSize, footerFontSize;
         if (paperWidth <= 58) {
@@ -2533,46 +3704,73 @@ function printReceipt(transaction) {
             .details { margin: 20px 0; }
             .details p { margin: 5px 0; }
             table { width: 100%; border-collapse: collapse; }
-            th, td { border: 1px dashed #000; padding: 8px; text-align: left; }
-            th { border-bottom: 2px solid #000; }
+            th, td { border: 1px dashed #000; padding: 4px 2px; text-align: left; vertical-align: top; }
+            th { border-bottom: 2px solid #000; font-weight: bold; }
             .total { border-top: 2px solid #000; font-weight: bold; }
             .footer { margin-top: 30px; text-align: center; font-size: ${footerFontSize}; }
+            .variant-info { font-size: 0.8em; color: #666; margin-top: 2px; }
+            .item-name { font-weight: bold; }
+            .item-details { font-size: 0.9em; margin-top: 2px; }
         `;
 
-        const itemsRows = (transaction.items || []).map(item => {
+        const itemsRows = (latestTransaction.items || []).map(item => {
             const itemName = item.name || 'Item Tidak Dikenal';
             const itemPrice = item.price || 0;
-            const itemQty = item.qty || 0;
+            // Use quantity field with fallback to qty for backward compatibility
+            const itemQty = (item.quantity != null ? item.quantity : item.qty) || 0;
             const itemSubtotal = item.subtotal || (itemPrice * itemQty);
-            return '<tr><td>' + itemName + '</td><td>' + formatCurrency(itemPrice) + '</td><td>' + itemQty + '</td><td>' + formatCurrency(itemSubtotal) + '</td></tr>';
+            
+            // Build display name with variant details if available
+            let displayText = `<div class="item-name">${itemName}</div>`;
+            if (item.variant) {
+                const v = item.variant;
+                const parts = [];
+                // Prioritize showing note (variant name) first, as it's more descriptive
+                if (v.note) parts.push(v.note);
+                if (v.qty && v.unit) parts.push(`${v.qty} ${v.unit}`);
+                if (v.sku) parts.push(`SKU: ${v.sku}`);
+                if (parts.length) {
+                    displayText += `<div class="item-details">${parts.join(' • ')}</div>`;
+                }
+            } else if (item.variantQty && item.variantUnit) {
+                // Backward compatibility for old format
+                displayText += `<div class="item-details">${item.variantQty} ${item.variantUnit}</div>`;
+            }
+            
+            return '<tr><td>' + displayText + '</td><td>' + formatCurrency(itemPrice) + '</td><td>' + itemQty + '</td><td>' + formatCurrency(itemSubtotal) + '</td></tr>';
         }).join('');
 
         const receipt = document.createElement('div');
         receipt.className = 'receipt';
+        const isStillDebt = latestTransaction.isDebt && latestTransaction.remainingAmount > 0;
         receipt.innerHTML = (
             '<div style="text-align:center; margin-bottom: 8px;">'
             + (appSettings?.logoBase64 ? ('<img src="' + appSettings.logoBase64 + '" style="max-height:60px; object-fit:contain;" />') : '')
             + '<h1>' + (appSettings?.storeName || 'STRUK PENJUALAN') + '</h1>'
             + '</div>'
             + '<div class="details">'
-            + '<p><strong>ID Transaksi:</strong> ' + transaction.id + '</p>'
-            + '<p><strong>Tanggal:</strong> ' + new Date(transaction.timestamp).toLocaleDateString() + '</p>'
-            + '<p><strong>Pelanggan:</strong> ' + (transaction.customerName || 'Pelanggan Umum') + '</p>'
+            + '<p><strong>ID Transaksi:</strong> ' + latestTransaction.id + '</p>'
+            + '<p><strong>Tanggal:</strong> ' + new Date(latestTransaction.timestamp).toLocaleDateString() + '</p>'
+            + '<p><strong>Pelanggan:</strong> ' + (latestTransaction.customerName || 'Pelanggan Umum') + '</p>'
             + (showAddr && appSettings?.address ? ('<p><strong>Alamat:</strong> ' + appSettings.address + '</p>') : '')
             + (showPhone && appSettings?.phone ? ('<p><strong>Telepon:</strong> ' + appSettings.phone + '</p>') : '')
             + '</div>'
             + '<table><thead><tr><th>Item</th><th>Harga</th><th>Jml</th><th>Total</th></tr></thead><tbody>'
             + itemsRows
             + '</tbody><tfoot>'
-            + (typeof transaction.subtotal === 'number' ? ('<tr><td colspan="3">Subtotal</td><td>' + formatCurrency(transaction.subtotal) + '</td></tr>') : '')
-            + (typeof transaction.discountAmount === 'number' && transaction.discountAmount > 0 ? ('<tr><td colspan="3">Diskon</td><td>- ' + formatCurrency(transaction.discountAmount) + '</td></tr>') : '')
-            + (typeof transaction.taxAmount === 'number' && transaction.taxAmount > 0 ? ('<tr><td colspan="3">Pajak</td><td>' + formatCurrency(transaction.taxAmount) + '</td></tr>') : '')
-            + (typeof transaction.serviceAmount === 'number' && transaction.serviceAmount > 0 ? ('<tr><td colspan="3">Layanan</td><td>' + formatCurrency(transaction.serviceAmount) + '</td></tr>') : '')
-            + '<tr class="total"><td colspan="3">TOTAL</td><td>' + formatCurrency(transaction.totalAmount || 0) + '</td></tr>'
+            + (typeof latestTransaction.subtotal === 'number' ? ('<tr><td colspan="3">Subtotal</td><td>' + formatCurrency(latestTransaction.subtotal) + '</td></tr>') : '')
+            + (typeof latestTransaction.discountAmount === 'number' && latestTransaction.discountAmount > 0 ? ('<tr><td colspan="3">Diskon</td><td>- ' + formatCurrency(latestTransaction.discountAmount) + '</td></tr>') : '')
+            + (typeof latestTransaction.taxAmount === 'number' && latestTransaction.taxAmount > 0 ? ('<tr><td colspan="3">Pajak</td><td>' + formatCurrency(latestTransaction.taxAmount) + '</td></tr>') : '')
+            + (typeof latestTransaction.serviceAmount === 'number' && latestTransaction.serviceAmount > 0 ? ('<tr><td colspan="3">Layanan</td><td>' + formatCurrency(latestTransaction.serviceAmount) + '</td></tr>') : '')
+            + '<tr class="total"><td colspan="3">TOTAL</td><td>' + formatCurrency(latestTransaction.totalAmount || 0) + '</td></tr>'
             + '</tfoot></table>'
             + '<div class="details">'
-            + '<p><strong>Metode Pembayaran:</strong> ' + (transaction.paymentMethod ? transaction.paymentMethod.toUpperCase() : 'UNKNOWN') + '</p>'
-            + (transaction.paymentMethod === 'cash' ? ('<p><strong>Jumlah Diterima:</strong> ' + formatCurrency(transaction.amountReceived || 0) + '</p><p><strong>Kembalian:</strong> ' + formatCurrency(transaction.change || 0) + '</p>') : '')
+            + '<p><strong>Metode Pembayaran:</strong> ' + (latestTransaction.paymentMethod ? latestTransaction.paymentMethod.toUpperCase() : 'UNKNOWN') + '</p>'
+            + (isStillDebt ? 
+                ('<p><strong>Jumlah Dibayar:</strong> ' + formatCurrency(latestTransaction.amountReceived || 0) + '</p><p><strong>Sisa Hutang:</strong> <span style="color:red;">' + formatCurrency(latestTransaction.remainingAmount || 0) + '</span></p>') : 
+                (latestTransaction.paymentMethod === 'cash' ? ('<p><strong>Jumlah Diterima:</strong> ' + formatCurrency(latestTransaction.amountReceived || 0) + '</p><p><strong>Kembalian:</strong> <span style="' + ((latestTransaction.amountReceived || 0) < (latestTransaction.totalAmount || 0) ? 'color:red;' : '') + '">' + formatCurrency((latestTransaction.amountReceived || 0) - (latestTransaction.totalAmount || 0)) + '</span></p>') : '')
+            )
+            + (isStillDebt && latestTransaction.status ? '<p><strong>Status:</strong> <span class="badge ' + (latestTransaction.status === 'Lunas' ? 'bg-success' : (latestTransaction.status.includes('Sebagian') ? 'bg-warning text-dark' : 'bg-danger')) + '">' + latestTransaction.status + '</span></p>' : '')
             + '</div>'
             + (showFooter ? ('<div class="footer"><p>' + (appSettings?.receiptFooter || 'Terima kasih atas pembelian Anda!') + '</p>' + (((appSettings?.receiptFooter1 && appSettings.receiptFooter1.trim()) ? ('<p>' + appSettings.receiptFooter1 + '</p>') : '')) + '</div>') : '')
         );
@@ -2628,34 +3826,70 @@ function printReceipt(transaction) {
                 const doc = new jsPDFCtor({ unit: 'mm', format: [paperWidth, heightMm], orientation: 'portrait' });
                 // Fit width exactly
                 doc.addImage(imgData, 'JPEG', 0, 0, paperWidth, heightMm);
-                doc.save('receipt_' + transaction.id + '.pdf');
+                // Open custom receipt print page instead of PDF
+                const receiptData = {
+                    id: transaction.id,
+                    timestamp: transaction.timestamp,
+                    items: transaction.items,
+                    paymentMethod: transaction.paymentMethod,
+                    amountReceived: transaction.amountReceived,
+                    change: transaction.change,
+                    subtotal: transaction.subtotal,
+                    discountAmount: transaction.discountAmount,
+                    taxAmount: transaction.taxAmount,
+                    serviceAmount: transaction.serviceAmount,
+                    totalAmount: transaction.totalAmount,
+                    customerName: transaction.customerName,
+                    storeName: appSettings?.storeName,
+                    storeAddress: appSettings?.address,
+                    storePhone: appSettings?.phone,
+                    storeLogo: appSettings?.logoBase64,
+                    receiptFooter: appSettings?.receiptFooter,
+                    receiptFooter1: appSettings?.receiptFooter1,
+                };
+                
+                const dataParam = encodeURIComponent(JSON.stringify(receiptData));
+                const receiptUrl = latestTransaction.isDebt && latestTransaction.remainingAmount > 0 ? `/debt-receipt-print.html?data=${dataParam}` : `/receipt-print.html?data=${dataParam}`;
+                console.log('Opening receipt URL:', receiptUrl);
+                console.log('Receipt data being sent:', receiptData);
+                window.open(receiptUrl, '_blank', 'width=400,height=600');
+                
                 try { document.body.removeChild(container); } catch (e) {}
                 resolve();
                 return 'done';
             } catch (primaryErr) {
-                console.warn('[PDF] primary canvas->jsPDF failed, trying html2pdf path:', primaryErr);
-                // Secondary: try html2pdf if available
-                if (typeof html2pdf !== 'undefined') {
-                    try {
-                        const opt = {
-                            margin: 0,
-                            filename: 'receipt_' + transaction.id + '.pdf',
-                            image: { type: 'jpeg', quality: 0.98 },
-                            html2canvas: { 
-                                scale: 1.5, 
-                                useCORS: true, 
-                                backgroundColor: '#ffffff',
-                                width: paperWidth,
-                                windowWidth: paperWidth
-                            },
-                            jsPDF: { unit: 'mm', format: [paperWidth, heightMm], orientation: 'portrait' }
-                        };
-                        await html2pdf().set(opt).from(receipt).save();
-                    } catch (e2) {
-                        console.warn('[PDF] html2pdf path failed:', e2);
-                    }
-                }
-                reject(primaryErr);
+                console.warn('[PDF] primary canvas->jsPDF failed, using custom receipt page:', primaryErr);
+                // Fallback: use custom receipt print page directly
+                const receiptData = {
+                    id: transaction.id,
+                    timestamp: transaction.timestamp,
+                    items: transaction.items,
+                    paymentMethod: transaction.paymentMethod,
+                    amountReceived: transaction.amountReceived,
+                    change: transaction.change,
+                    subtotal: transaction.subtotal,
+                    discountAmount: transaction.discountAmount,
+                    taxAmount: transaction.taxAmount,
+                    serviceAmount: transaction.serviceAmount,
+                    totalAmount: transaction.totalAmount,
+                    customerName: transaction.customerName,
+                    storeName: appSettings?.storeName,
+                    storeAddress: appSettings?.address,
+                    storePhone: appSettings?.phone,
+                    storeLogo: appSettings?.logoBase64,
+                    receiptFooter: appSettings?.receiptFooter,
+                    receiptFooter1: appSettings?.receiptFooter1,
+                };
+                
+                const dataParam = encodeURIComponent(JSON.stringify(receiptData));
+                const receiptUrl = latestTransaction.isDebt && latestTransaction.remainingAmount > 0 ? `/debt-receipt-print.html?data=${dataParam}` : `/receipt-print.html?data=${dataParam}`;
+                console.log('Opening receipt URL:', receiptUrl);
+                console.log('Receipt data being sent:', receiptData);
+                window.open(receiptUrl, '_blank', 'width=400,height=600');
+                
+                try { document.body.removeChild(container); } catch (e) {}
+                resolve();
+                return 'done';
             }
         }).then(() => {
             try { document.body.removeChild(container); } catch (e) {}
@@ -2666,9 +3900,8 @@ function printReceipt(transaction) {
     } catch (e) {
         reject(e);
     }
-    });
+});
 }
-
 // Fallback: generate PDF using jsPDF text rendering (no html2canvas)
 async function generateReceiptPDF_FallbackJSPDF(transaction) {
     try {
@@ -2711,9 +3944,16 @@ async function generateReceiptPDF_FallbackJSPDF(transaction) {
         line('TOTAL: ' + formatCurrency(transaction.totalAmount || 0), 11, true);
         y += 2;
         line('Metode: ' + (transaction.paymentMethod ? transaction.paymentMethod.toUpperCase() : 'UNKNOWN'), 9);
-        if (transaction.paymentMethod === 'cash') {
+        if (transaction.isDebt) {
+            line('Dibayar: ' + formatCurrency(transaction.amountReceived || 0), 9);
+            line('Sisa Hutang: ' + formatCurrency(transaction.remainingAmount || 0), 9, true);
+        } else if (transaction.paymentMethod === 'cash') {
+            const change = (transaction.amountReceived || 0) - (transaction.totalAmount || 0);
             line('Diterima: ' + formatCurrency(transaction.amountReceived || 0), 9);
-            line('Kembali: ' + formatCurrency(transaction.change || 0), 9);
+            line('Kembali: ' + formatCurrency(change), 9, change < 0);
+        }
+        if (transaction.isDebt && transaction.status) {
+            line('Status: ' + transaction.status, 9);
         }
         if (appSettings?.showReceiptFooter !== false) {
             y += 2;
@@ -2857,6 +4097,42 @@ function openCheckoutModal() {
 
 function setupEventListeners() {
     // PERBAIKAN: Debounce search input untuk performa lebih baik
+    
+    // Customer selection change listener
+    if (customerSelect) {
+        customerSelect.addEventListener('change', (e) => {
+            const customerId = e.target.value;
+            if (customerId === 'default') {
+                selectedCustomer = { id: 'default', name: 'Pelanggan Umum' };
+            } else {
+                const customer = customers.find(c => c.id.toString() === customerId);
+                if (customer) {
+                    selectedCustomer = { id: customer.id, name: customer.name };
+                } else {
+                    selectedCustomer = { id: 'default', name: 'Pelanggan Umum' };
+                }
+            }
+            updateCustomerInfo();
+            console.log('Customer selected:', selectedCustomer);
+        });
+    }
+    
+    // Payment method change listener
+    const paymentMethodRadios = document.querySelectorAll('input[name="paymentMethod"]');
+    paymentMethodRadios.forEach(radio => {
+        radio.addEventListener('change', function() {
+            const paymentMethod = this.value;
+            if (paymentMethod === 'cash') {
+                if (cashPaymentSection) cashPaymentSection.style.display = 'block';
+                if (qrisPaymentSection) qrisPaymentSection.style.display = 'none';
+            } else {
+                if (cashPaymentSection) cashPaymentSection.style.display = 'none';
+                if (qrisPaymentSection) qrisPaymentSection.style.display = 'block';
+                // Load specific image for the selected payment method
+                loadQrisImage(paymentMethod);
+            }
+        });
+    });
     if (searchInput) {
         searchInput.addEventListener('input', (e) => {
             searchTerm = e.target.value;
@@ -2982,6 +4258,188 @@ function setupEventListeners() {
         });
     }
 
+    // Shift management functions
+    let currentShift = null;
+
+    async function loadCurrentShift() {
+        try {
+            const response = await fetch('/api/shifts/current', {
+                credentials: 'include'
+            });
+            const result = await response.json();
+            if (result.success && result.shift) {
+                currentShift = result.shift;
+                updateShiftUI(true);
+            } else {
+                currentShift = null;
+                updateShiftUI(false);
+            }
+        } catch (error) {
+            console.error('Error loading current shift:', error);
+            currentShift = null;
+            updateShiftUI(false);
+        }
+    }
+
+    function updateShiftUI(isShiftOpen) {
+        if (shiftActionBtn) {
+            if (isShiftOpen) {
+                shiftActionBtn.textContent = 'Tutup Shift';
+                shiftActionBtn.classList.remove('btn-outline-warning');
+                shiftActionBtn.classList.add('btn-outline-danger');
+            } else {
+                shiftActionBtn.textContent = 'Buka Shift';
+                shiftActionBtn.classList.remove('btn-outline-danger');
+                shiftActionBtn.classList.add('btn-outline-warning');
+            }
+        }
+        if (shiftStatusLabel) {
+            if (isShiftOpen) {
+                shiftStatusLabel.textContent = 'Shift: Dibuka';
+                shiftStatusLabel.classList.remove('d-none');
+            } else {
+                shiftStatusLabel.textContent = 'Shift: Belum dibuka';
+                shiftStatusLabel.classList.remove('d-none');
+            }
+        }
+    }
+
+    async function handleShiftAction() {
+        if (currentShift) {
+            // Close shift
+            const closingCash = prompt('Masukkan jumlah kas akhir:');
+            if (closingCash === null) return; // User cancelled
+            
+            try {
+                const response = await fetch('/api/shifts/close', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ closingCash: parseFloat(closingCash) || 0 }),
+                    credentials: 'include'
+                });
+                const result = await response.json();
+                if (result.success) {
+                    alert('Shift berhasil ditutup!');
+                    currentShift = null;
+                    updateShiftUI(false);
+                } else {
+                    alert('Gagal menutup shift: ' + (result.message || 'Terjadi kesalahan'));
+                }
+            } catch (error) {
+                console.error('Error closing shift:', error);
+                alert('Gagal menutup shift. Silakan coba lagi.');
+            }
+        } else {
+            // Open shift
+            const openingCash = prompt('Masukkan jumlah kas awal (kosongkan untuk 0):');
+            if (openingCash === null) return; // User cancelled
+            
+            try {
+                const response = await fetch('/api/shifts/open', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ openingCash: parseFloat(openingCash) || 0 }),
+                    credentials: 'include'
+                });
+                const result = await response.json();
+                if (result.success) {
+                    alert('Shift berhasil dibuka!');
+                    currentShift = result.shift;
+                    updateShiftUI(true);
+                } else {
+                    alert('Gagal membuka shift: ' + (result.message || 'Terjadi kesalahan'));
+                }
+            } catch (error) {
+                console.error('Error opening shift:', error);
+                alert('Gagal membuka shift. Silakan coba lagi.');
+            }
+        }
+    }
+
+    // Dark mode functionality
+    function initDarkMode() {
+        const darkModeToggle = document.getElementById('darkModeToggle');
+        
+        // Debug: Check if element is found
+        console.log('Dark mode toggle element found:', !!darkModeToggle);
+        
+        if (darkModeToggle) {
+            // Set initial state based on saved localStorage first, then current theme
+            const savedDarkMode = localStorage.getItem('admin_darkMode') === 'true';
+            const isDark = savedDarkMode || document.body.classList.contains('dark');
+            
+            console.log('Initial dark mode state:', { savedDarkMode, isDark });
+            
+            if (isDark) {
+                document.body.classList.add('dark');
+            }
+            darkModeToggle.checked = isDark;
+            
+            // Add change event listener (checkbox change event)
+            darkModeToggle.addEventListener('change', async () => {
+                const isDark = darkModeToggle.checked;
+                
+                if (isDark) {
+                    document.body.classList.add('dark');
+                } else {
+                    document.body.classList.remove('dark');
+                }
+                
+                // Save to localStorage for immediate persistency
+                localStorage.setItem('admin_darkMode', isDark.toString());
+                
+                // Save to settings
+                try {
+                    // Ensure appSettings is loaded
+                    if (!appSettings) {
+                        await loadSettings();
+                    }
+                    const settings = { ...appSettings };
+                    settings.darkMode = isDark;
+                    await fetch('/api/settings', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(settings),
+                        credentials: 'include'
+                    });
+                    
+                    // Update any other dark mode checkboxes
+                    const darkModeCheckbox = document.getElementById('darkMode');
+                    if (darkModeCheckbox) {
+                        darkModeCheckbox.checked = isDark;
+                    }
+                } catch (e) {
+                    console.warn('Failed to save dark mode setting:', e);
+                }
+            });
+        } else {
+            console.warn('Dark mode toggle element not found in DOM');
+        }
+    }
+
+    // Logout functionality
+    function handleLogout() {
+        if (confirm('Apakah Anda yakin ingin logout?')) {
+            fetch('/api/logout', {
+                method: 'POST',
+                credentials: 'include'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.href = '/login.html';
+                } else {
+                    alert('Gagal logout. Silakan coba lagi.');
+                }
+            })
+            .catch(error => {
+                console.error('Logout error:', error);
+                // Fallback: redirect anyway
+                window.location.href = '/login.html';
+            });
+        }
+    }
+
     // Product filter buttons
     function updateFilterButtons() {
         const btns = [filterAllBtn, filterTopBtn, filterBestBtn, filterDiscountedBtn];
@@ -3003,6 +4461,193 @@ function setupEventListeners() {
             if (cartContainer) cartContainer.classList.toggle('is-open');
         });
     }
-}
 
-// ... (rest of the code remains the same)
+    // Shift button
+    if (shiftActionBtn) {
+        shiftActionBtn.addEventListener('click', handleShiftAction);
+    }
+
+    // Dark mode toggle
+    initDarkMode();
+
+    // Logout button
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', handleLogout);
+    }
+
+    // Load current shift status
+    loadCurrentShift();
+
+    // Confirm payment button
+    if (confirmPaymentBtn) {
+        confirmPaymentBtn.addEventListener('click', async () => {
+            // Prevent duplicate submissions
+            if (isLoading) {
+                console.warn('Transaction already in progress');
+                return;
+            }
+
+            try {
+                isLoading = true;
+                confirmPaymentBtn.disabled = true;
+                confirmPaymentBtn.textContent = 'Processing...';
+
+                const paymentMethodRadio = document.querySelector('input[name="paymentMethod"]:checked');
+                if (!paymentMethodRadio) {
+                    throw new Error('Please select a payment method');
+                }
+
+                const paymentMethod = paymentMethodRadio.value;
+                const totals = computeTotals();
+                const total = totals.grandTotal;
+
+                // Pastikan keranjang tidak kosong
+                if (cart.length === 0) {
+                    throw new Error('Cart is empty');
+                }
+
+                // Validasi stok sebelum checkout (hanya log peringatan)
+                for (const item of cart) {
+                    const product = products.find(p => p.id === item.productId);
+                    if (!product) {
+                        console.warn('Product not found: ' + item.name);
+                        continue;
+                    }
+                    const itemQty = (item.quantity != null ? item.quantity : item.qty) || 0;
+                    if ((product.stock || 0) < itemQty) {
+                        console.warn('Checkout dengan stok tidak cukup untuk ' + item.name + '. Stok: ' + product.stock + ', Qty: ' + itemQty);
+                    }
+                }
+
+                let amountReceived = total;
+
+                if (paymentMethod === 'cash') {
+                    amountReceived = parseInt(amountReceivedInput.value) || 0;
+                } else {
+                    // For non-cash payments, amount received is 0 initially
+                    amountReceived = 0;
+                }
+
+                // Handle debt scenarios
+                if (amountReceived < total) {
+                    const remainingAmount = total - amountReceived;
+                    
+                    // Require specific customer for debt - Pelanggan Umum not allowed
+                    if (!selectedCustomer || selectedCustomer.id === 'default' || selectedCustomer.id === 1) {
+                        // Focus on customer selection and require specific customer
+                        if (customerSelect) {
+                            customerSelect.focus();
+                            alert('Hutang hanya dapat dicatat untuk pelanggan spesifik. Silakan pilih pelanggan terlebih dahulu. Pelanggan Umum tidak diizinkan untuk hutang.');
+                            throw new Error('Specific customer required for debt recording');
+                        }
+                    }
+                    
+                    // Confirm debt recording
+                    if (!confirm(`Konfirmasi: Pembayaran ${amountReceived === 0 ? 'tidak ada' : 'parsial'} diterima. Sisa hutang sebesar ${formatCurrency(remainingAmount)} akan dicatat untuk customer ${selectedCustomer.name}. Lanjutkan?`)) {
+                        throw new Error('Pembayaran dibatalkan');
+                    }
+                }
+
+                // Prepare transaction data
+                const transactionData = {
+                    items: cart,
+                    paymentMethod,
+                    amountReceived,
+                    customerId: selectedCustomer.id,
+                    customerName: selectedCustomer.name,
+                    discountPercent: discountType === 'percent' ? discountValue : 0,
+                    discountAmount: discountType === 'amount' ? discountValue : 0,
+                };
+
+                // Add debt tracking fields for any partial or zero payment
+                if (amountReceived < total) {
+                    transactionData.paidAmount = amountReceived;
+                    transactionData.remainingAmount = Math.max(0, total - amountReceived);
+                    transactionData.paymentDate = new Date().toISOString().split('T')[0];
+                    transactionData.isDebt = true;
+                    console.log('Debt transaction data:', {
+                        total,
+                        amountReceived,
+                        remainingAmount: transactionData.remainingAmount,
+                        paidAmount: transactionData.paidAmount
+                    });
+                }
+
+                const res = await fetch('/api/transactions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(transactionData),
+                });
+
+                const result = await res.json();
+
+                if (!res.ok) {
+                    throw new Error(result.message || 'Transaction failed');
+                }
+
+                if (checkoutModal) checkoutModal.hide();
+
+                const successIdEl = document.getElementById('successTransactionId');
+                if (successIdEl) {
+                    successIdEl.textContent = result.id;
+                }
+                if (paymentSuccessModal) paymentSuccessModal.show();
+
+                if (printReceiptBtn) {
+                    console.log('Setting up main print receipt button handler');
+                    printReceiptBtn.onclick = () => {
+                        console.log('Main print receipt button clicked');
+                        printReceipt(result);
+                    };
+                } else {
+                    console.log('Main print receipt button not found');
+                }
+
+                // Tempatkan transaksi baru di urutan pertama langsung
+                try {
+                    const merged = [result, ...(recentTransactions || [])];
+                    const sorted = merged.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+                    renderRecentTransactions(sorted);
+                    try {
+                        const el = document.getElementById('recentTransactionsList');
+                        if (el) el.scrollTop = 0;
+                    } catch {}
+                } catch {}
+
+                // Reset cart (local and server)
+                cart = [];
+                renderCart();
+                try { localStorage.removeItem('pos_cart'); } catch (e) {}
+                try { localStorage.setItem('pos_cart_updatedAt', String(Date.now())); } catch (e) {}
+                try { await clearServerCart(); } catch (e) {}
+
+                // Reset discount
+                discountValue = 0;
+                if (discountValueInput) discountValueInput.value = '0';
+                try { localStorage.setItem('pos_discountValue', '0'); } catch (e) {}
+
+                // Reset payment method to default "Cash"
+                if (typeof resetPaymentMethodToDefault === 'function') {
+                    resetPaymentMethodToDefault();
+                }
+
+                // Reload data setelah transaksi sukses
+                try {
+                    await Promise.all([loadProducts(), loadRecentTransactions()]);
+                } catch (reloadError) {
+                    console.warn('Error reloading data after transaction:', reloadError);
+                }
+            } catch (error) {
+                console.error('Transaction error:', error);
+                alert('Transaksi gagal: ' + error.message);
+            } finally {
+                isLoading = false;
+                if (confirmPaymentBtn) {
+                    confirmPaymentBtn.disabled = false;
+                    confirmPaymentBtn.textContent = 'Confirm Payment';
+                }
+            }
+        });
+    }
+
+}

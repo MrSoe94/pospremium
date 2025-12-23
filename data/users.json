@@ -1,1 +1,21 @@
-ENC1:evP19QiNnteJIC+LSXbskA==:eqVFzAZqfCr58xJx:9F4cdsX7XT9YiC9pLQBWow==:P2sXpmeb7HvAr/ELC90F91Lipm+RT7ZcGT+UgcRoCnjK64hzF7u2bcOPm1BRWb2q0JGsJ4UY07dsK7LDXoIkgMJy1ikZSmSa88HYqdhZmh0NWbRRFNonBOKU8uyOExDuMm4XFo6gHVVj6ntrWbNxjErzGlONr4KZJbFOo4D6+KjyyjWaBBKjtawr5BZXZqDokksirlaoNwM0ttjzUUlTAJicFXyJrDG7cjdkiyiyHwotlwzpQsrOB6McYIOLU0a9EwpyANPZqRtvT8coqWIqDBpCDgema2KE3fK/s/NEqT9Qnsp848jDbEBav3ThEM6YfQZ9brABGMr1gVT6YadWMUOBBjpUk3wg2NWmohI9Tj8edBhBrpDjgIUutsYyat+nv00mvohToJLX3HCxOdWOcNwxR4YcxIcuQnW8MTDt74z+W4znaNMp6vUEDxyV3S9ogvrX/DfnfWJksBqcEvazSxgldfL8MI6TTZGDatAyChgSMmF+RYqWN23NXRPGyEqNP/qbShnSKKdrQd8M53hJcxg8QVQUPwiyBfh0y9Q3Eun5gmynlWY++v5jcUaiigi6B8P7y/oVvuKp20Bqd1Ujyvagu9JOiS3sdsW4oImzsDj/duGbRnXxk0QHTKufq1H4Sm9LRBzOhw0UocsR4CxmbvqQW/kO/Ldv6S0p04R0jlwQo+7UU+aUo707hXf6
+[
+  {
+    "id": 1,
+    "username": "admin",
+    "password": "$2a$10$.RnnDI5tnjSEI7BU1Ysshe2uGm/fjf9iY4P0pga.oIgoHwC53K4ZK",
+    "role": "admin",
+    "name": "Admin",
+    "status": "active",
+    "updatedAt": "2025-12-07T23:21:45.880Z",
+    "lastLogin": "2025-12-23T04:35:58.787Z"
+  },
+  {
+    "id": 2,
+    "username": "kasir",
+    "password": "$2a$10$EU.5liqcpLtlAp4eIRQGxO7CwExAksLEzpGqrjgJe5jhg1mtj2Ota",
+    "role": "cashier",
+    "name": "Kasir 1",
+    "status": "active",
+    "updatedAt": "2025-12-07T23:33:36.646Z"
+  }
+]

@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Struk Hutang</title>
+    <style>
+        @media print {
+            body { margin: 0; padding: 10px; }
+            .no-print { display: none !important; }
+        }
+        
+        body {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 12px;
+            line-height: 1.2;
+            margin: 0;
+            padding: 20px;
+            background: white;
+        }
+        
+        .receipt-container {
+            max-width: 300px;
+            margin: 0 auto;
+            background: white;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        .header h1 {
+            margin: 0 0 5px 0;
+            font-size: 16px;
+            font-weight: bold;
+            color: #d32f2f;
+        }
+        
+        .header .logo {
+            max-height: 60px;
+            margin-bottom: 10px;
+        }
+        
+        .info-section {
+            margin: 15px 0;
+        }
+        
+        .info-section p {
+            margin: 3px 0;
+        }
+        
+        .debt-status {
+            background: #ffebee;
+            border: 2px solid #d32f2f;
+            border-radius: 5px;
+            padding: 10px;
+            margin: 15px 0;
+            text-align: center;
+        }
+        
+        .debt-status.paid {
+            background: #e8f5e8;
+            border-color: #4caf50;
+        }
+        
+        .debt-status.partial {
+            background: #fff3e0;
+            border-color: #ff9800;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-weight: bold;
+            font-size: 11px;
+        }
+        
+        .status-unpaid {
+            background: #d32f2f;
+            color: white;
+        }
+        
+        .status-partial {
+            background: #ff9800;
+            color: white;
+        }
+        
+        .status-paid {
+            background: #4caf50;
+            color: white;
+        }
+        
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        
+        .items-table th,
+        .items-table td {
+            border: 1px dashed #000;
+            padding: 5px;
+            text-align: left;
+            font-size: 11px;
+        }
+        
+        .items-table th {
+            border-bottom: 2px solid #000;
+            font-weight: bold;
+        }
+        
+        .item-name {
+            font-weight: bold;
+        }
+        
+        .item-details {
+            font-size: 0.8em;
+            color: #666;
+            margin-top: 2px;
+        }
+        
+        .total-row {
+            border-top: 2px solid #000;
+            font-weight: bold;
+        }
+        
+        .debt-summary {
+            background: #f5f5f5;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 10px;
+            margin: 15px 0;
+        }
+        
+        .debt-amount {
+            font-size: 14px;
+            font-weight: bold;
+            color: #d32f2f;
+        }
+        
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            font-size: 10px;
+        }
+        
+        .print-controls {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: #f0f0f0;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        
+        .print-controls button {
+            padding: 8px 15px;
+            margin: 0 5px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        
+        .print-btn {
+            background: #007bff;
+            color: white;
+        }
+        
+        .close-btn {
+            background: #6c757d;
+            color: white;
+        }
+        
+        @media (max-width: 400px) {
+            body { padding: 10px; }
+            .receipt-container { max-width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <div class="print-controls no-print">
+        <button class="print-btn" onclick="window.print()">Print</button>
+        <button class="close-btn" onclick="window.close()">Close</button>
+    </div>
+    
+    <div class="receipt-container" id="receiptContent">
+        <!-- Content will be populated by JavaScript -->
+    </div>
+    
+    <script>
+        // Get transaction data from URL parameters
+        function getTransactionData() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const transactionData = urlParams.get('data');
+            
+            if (transactionData) {
+                try {
+                    return JSON.parse(decodeURIComponent(transactionData));
+                } catch (e) {
+                    console.error('Error parsing transaction data:', e);
+                    return null;
+                }
+            }
+            return null;
+        }
+        
+        // Fetch latest transaction data from server
+        async function fetchLatestTransactionData(transactionId) {
+            try {
+                const response = await fetch(`/api/transactions/${transactionId}`);
+                if (response.ok) {
+                    const latestData = await response.json();
+                    console.log('Latest transaction data fetched:', latestData);
+                    return latestData;
+                } else {
+                    console.warn('Failed to fetch latest transaction data');
+                    return null;
+                }
+            } catch (error) {
+                console.error('Error fetching latest transaction data:', error);
+                return null;
+            }
+        }
+        
+        // Format currency
+        function formatCurrency(amount) {
+            return new Intl.NumberFormat('id-ID', {
+                style: 'currency',
+                currency: 'IDR',
+                minimumFractionDigits: 0
+            }).format(amount);
+        }
+        
+        // Get status class and text
+        function getStatusInfo(status) {
+            switch(status) {
+                case 'Lunas':
+                    return { class: 'status-paid', text: 'LUNAS' };
+                case 'Belum Lunas':
+                    return { class: 'status-unpaid', text: 'BELUM LUNAS' };
+                case 'Sebagian':
+                    return { class: 'status-partial', text: 'SEBAGIAN' };
+                default:
+                    return { class: 'status-unpaid', text: status || 'BELUM LUNAS' };
+            }
+        }
+        
+        // Render receipt
+        async function renderReceipt(transaction) {
+            console.log('renderReceipt called with:', transaction);
+            const container = document.getElementById('receiptContent');
+            
+            if (!container) {
+                console.error('Receipt container not found');
+                return;
+            }
+            
+            // Fetch latest transaction data from server to ensure we have updated payment info
+            let latestTransaction = transaction;
+            if (transaction.id) {
+                const serverData = await fetchLatestTransactionData(transaction.id);
+                if (serverData) {
+                    latestTransaction = serverData;
+                    console.log('Using latest transaction data from server');
+                } else {
+                    console.log('Using cached transaction data');
+                }
+            }
+            
+            const statusInfo = getStatusInfo(latestTransaction.status || (latestTransaction.remainingAmount === 0 ? 'Lunas' : 'Belum Lunas'));
+            console.log('Status info:', statusInfo);
+            
+            try {
+                const receiptHTML = `
+                    <div class="header">
+                        ${latestTransaction.storeLogo ? `<img src="${latestTransaction.storeLogo}" class="logo" alt="Store Logo">` : ''}
+                        <h1>STRUK HUTANG</h1>
+                    </div>
+                    
+                    <div class="debt-status ${latestTransaction.status === 'Lunas' ? 'paid' : (latestTransaction.status === 'Sebagian' ? 'partial' : '')}">
+                        <span class="status-badge ${statusInfo.class}">${statusInfo.text}</span>
+                    </div>
+                    
+                    <div class="info-section">
+                        <p><strong>ID Transaksi:</strong> ${latestTransaction.id}</p>
+                        <p><strong>Tanggal:</strong> ${new Date(latestTransaction.timestamp).toLocaleDateString('id-ID')}</p>
+                        <p><strong>Pelanggan:</strong> ${latestTransaction.customerName || 'Pelanggan Umum'}</p>
+                        ${latestTransaction.storeAddress ? `<p><strong>Alamat:</strong> ${latestTransaction.storeAddress}</p>` : ''}
+                        ${latestTransaction.storePhone ? `<p><strong>Telepon:</strong> ${latestTransaction.storePhone}</p>` : ''}
+                    </div>
+                    
+                    <table class="items-table">
+                        <thead>
+                            <tr>
+                                <th>Item</th>
+                                <th>Harga</th>
+                                <th>Qty</th>
+                                <th>Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${latestTransaction.items.map(item => {
+                                const itemQty = (item.quantity != null ? item.quantity : item.qty) || 0;
+                                let itemDisplay = `<div class="item-name">${item.name || 'Item Tidak Dikenal'}</div>`;
+                                
+                                if (item.variant) {
+                                    const v = item.variant;
+                                    const parts = [];
+                                    if (v.qty && v.unit) parts.push(`${v.qty} ${v.unit}`);
+                                    if (v.sku) parts.push(`SKU: ${v.sku}`);
+                                    if (v.note) parts.push(v.note);
+                                    if (parts.length) {
+                                        itemDisplay += `<div class="item-details">${parts.join(' • ')}</div>`;
+                                    }
+                                }
+                                
+                                return `
+                                    <tr>
+                                        <td>${itemDisplay}</td>
+                                        <td>${formatCurrency(item.price || 0)}</td>
+                                        <td>${itemQty}</td>
+                                        <td>${formatCurrency((item.subtotal || (item.price * itemQty)) || 0)}</td>
+                                    </tr>
+                                `;
+                            }).join('')}
+                        </tbody>
+                        <tfoot>
+                            ${latestTransaction.subtotal ? `<tr><td colspan="3">Subtotal</td><td>${formatCurrency(latestTransaction.subtotal)}</td></tr>` : ''}
+                            ${latestTransaction.discountAmount && latestTransaction.discountAmount > 0 ? `<tr><td colspan="3">Diskon</td><td>-${formatCurrency(latestTransaction.discountAmount)}</td></tr>` : ''}
+                            ${latestTransaction.taxAmount && latestTransaction.taxAmount > 0 ? `<tr><td colspan="3">Pajak</td><td>${formatCurrency(latestTransaction.taxAmount)}</td></tr>` : ''}
+                            ${latestTransaction.serviceAmount && latestTransaction.serviceAmount > 0 ? `<tr><td colspan="3">Layanan</td><td>${formatCurrency(latestTransaction.serviceAmount)}</td></tr>` : ''}
+                            <tr class="total-row">
+                                <td colspan="3">TOTAL HUTANG</td>
+                                <td>${formatCurrency(latestTransaction.totalAmount || 0)}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                    
+                    <div class="debt-summary">
+                        <p><strong>Metode Pembayaran:</strong> ${(latestTransaction.paymentMethod || 'CASH').toUpperCase()}</p>
+                        <p><strong>Jumlah Dibayar:</strong> ${formatCurrency(latestTransaction.paidAmount || latestTransaction.amountReceived || 0)}</p>
+                        <p><strong>Sisa Hutang:</strong> <span class="debt-amount">${formatCurrency(Math.max(0, (latestTransaction.totalAmount || 0) - (latestTransaction.paidAmount || latestTransaction.amountReceived || 0)))}</span></p>
+                    </div>
+                    
+                    <div class="footer">
+                        <p>${latestTransaction.receiptFooter || 'Terima kasih atas kepercayaan Anda!'}</p>
+                        ${latestTransaction.receiptFooter1 ? `<p>${latestTransaction.receiptFooter1}</p>` : ''}
+                        <p><small>Struk ini bukti hutang yang sah</small></p>
+                    </div>
+                `;
+                
+                console.log('Setting innerHTML');
+                container.innerHTML = receiptHTML;
+                console.log('Receipt rendered successfully');
+            } catch (error) {
+                console.error('Error rendering receipt:', error);
+                container.innerHTML = '<p>Error rendering receipt: ' + error.message + '</p>';
+            }
+        }
+        
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', async function() {
+            console.log('Debt receipt page loaded');
+            console.log('URL params:', window.location.search);
+            
+            const transaction = getTransactionData();
+            console.log('Transaction data received:', transaction);
+            
+            if (transaction) {
+                console.log('Rendering receipt for transaction:', transaction.id);
+                await renderReceipt(transaction);
+            } else {
+                console.error('No transaction data found');
+                document.getElementById('receiptContent').innerHTML = '<p>Error: Data transaksi tidak ditemukan</p>';
+            }
+        });
+    </script>
+</body>
+</html>

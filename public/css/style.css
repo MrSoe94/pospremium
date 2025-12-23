@@ -312,22 +312,29 @@ canvas {
   z-index: 1990 !important;
 }
 
-/* Pattern Border Effect for Product Cards */
+/* Pattern Border Effect for Product Cards - DISABLED to fix border issue */
 .product-card {
   position: relative !important;
-  background: transparent !important;
-  border: none !important;
+  background: white !important;
+  border: 1px solid #ddd !important;
   overflow: visible !important;
 }
 
+/* Disable pattern border wrapper since it's not used in current HTML structure */
 .product-card-wrapper {
   position: relative;
   background: #ffffff;
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  display: none !important; /* Hide since not used */
 }
 
+.product-card-pattern-border {
+  display: none !important; /* Hide since not used */
+}
+
+/* Hide any remaining pattern border elements */
 .product-card-pattern-border {
   position: absolute;
   top: 0;
@@ -345,6 +352,7 @@ canvas {
   animation: borderAnimation 0.6s infinite linear;
   pointer-events: none;
   z-index: 2;
+  display: none !important; /* Hide since not used */
 }
 
 @keyframes borderAnimation {

@@ -1,1 +1,20 @@
-ENC1:qNHdWQtj9ZdoH3zSAad/3Q==:+6wv8Uv1E3MztZE0:rOb/euHvQh0b2vkXKIOE7A==:5awXY/77zmGlLXnkiH8oQkr2isFnFqT2XkjPY7MjHzJsIJf5eFjU4u0ApSEWrRVHWT1I/tSY7pIC4UJ0GM3mYENwLhOspZ7lDE0Zog/sAhu2Yt7ywel8VtFHYW2Om1wBeQSDnPJ8a055/31W0sKy5Y0m4KYVSNM55AQAyiI9tIUdvyUOCHGR9danMa8ledI5lMhOUAC8awrRqtOCt6VZD7nW+vQFWs8HSCSw3pALEhP2cqM7OWQQb8yg5Az0h0ojj8WJw9F1TIauI4R8iKmoDExPF/ee2wPZHAe5Zqzx4I/rnJhlf1AJpQCSU3fMCkL/Dg54AQFXnaGWL1BsarVfgeeeLSqdxnMytptDc9EuHw0w3ahi4ac11zFycmHHuJNJnTkGj1dhfZPfjHHvTtpSPia+jSJVg9h7R2Nt0wzDtg4qbFYQQ6Kw1cgt8Yh4OdWWWT5UCNB8rssOu0rIOcJbHFHv0dqEPqSaWbG1Hz7phtYiYUnjBxMFCRLAYuJo+jR5+UStzgon0Q==
+[
+  {
+    "id": 1,
+    "name": "Umum",
+    "phone": "-",
+    "email": "",
+    "address": "-",
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2025-11-03T02:57:50.378Z"
+  },
+  {
+    "id": 1762290832488,
+    "name": "Wak Pardi",
+    "phone": "08998757585",
+    "email": "sugandigtexs@gmail.com",
+    "address": "Medan\n-",
+    "createdAt": "2025-11-04T21:13:52.488Z",
+    "updatedAt": "2025-12-23T00:23:35.941Z"
+  }
+]
